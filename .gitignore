@@ -1,9 +1,8 @@
 node_modules
-npm-debug.log*
-yarn.lock
 package-lock.json
 .DS_Store
 
 # Build output
-out
+src/renderer/bundle.js
+src/renderer/bundle.js.map
 
