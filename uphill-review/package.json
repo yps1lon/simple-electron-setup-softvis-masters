@@ -1,0 +1,33 @@
+{
+  "name": "uphill-review",
+  "version": "0.2.0",
+  "description": "Uphill imports at review: the stability ladder, the instability-sorted matrix and the stability race for one pull request",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "npm run build && electron .",
+    "build": "npm run build:engine && npm run build:renderer",
+    "build:engine": "tsc -p src/engine",
+    "build:renderer": "webpack",
+    "demo": "node demo/make-demo-repo.mjs demo-shop",
+    "test": "npm run build:engine && node --test test/review.test.mjs"
+  },
+  "keywords": [
+    "electron",
+    "architecture",
+    "instability",
+    "unstable dependency"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "electron": "^40.1.0",
+    "typescript": "^7.0.2",
+    "webpack": "^5.105.0",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0",
+    "yaml": "^2.9.0"
+  }
+}

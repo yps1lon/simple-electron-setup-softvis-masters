@@ -1,0 +1,11 @@
+node_modules
+package-lock.json
+.DS_Store
+
+# Build output
+src/renderer/bundle.js
+src/renderer/bundle.js.map
+src/engine/dist
+
+# Demo repository made by npm run demo
+demo-shop/

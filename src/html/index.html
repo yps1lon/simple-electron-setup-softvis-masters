@@ -2,15 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Electron + d3 Starter</title>
+    <title>Architectural drift visualizer</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <h1>Electron + d3 template</h1>
-    <p>Make changes to the visualization in <code>src/renderer/renderer.js</code> and see the result in the browser.</p>
-    <p>You can also edit the HTML in <code>src/html/index.html</code> and the CSS in <code>src/html/style.css</code>.</p>
+    <h1>Architectural drift</h1>
+    <div id="controls">
+      <button id="pick-repo">Pick repo…</button>
+      <button id="propose-spec">Propose spec</button>
+      <button id="load-spec">Load spec…</button>
+      <button id="analyze">Analyze</button>
+      <span id="view-toggle">
+        <button id="view-matrix" class="active">Matrix</button>
+        <button id="view-graph">Graph</button>
+      </span>
+      <button id="export-mermaid" title="Save the current view as a Mermaid .mmd file">Export Mermaid…</button>
+    </div>
+    <p id="status">Pick a repository to begin.</p>
+    <pre id="spec-output" hidden></pre>
+    <div id="stats"></div>
+    <div id="legend" hidden>
+      <span><i class="swatch divergent"></i>divergent — in code, forbidden by spec</span>
+      <span><i class="swatch convergent"></i>convergent — in code, allowed</span>
+      <span><i class="swatch absent"></i>absent — allowed, never built</span>
+      <span id="legend-note"></span>
+    </div>
     <div id="vis"></div>
+    <div id="details" hidden>
+      <button id="details-close" title="Close">&times;</button>
+      <div id="details-content"></div>
+    </div>
     <script src="../renderer/bundle.js"></script>
   </body>
   </html>
-

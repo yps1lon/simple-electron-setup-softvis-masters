@@ -7,6 +7,7 @@ Minimal setup for experimenting with visualizations in Electron using d3.
 - `src/main` – Electron main process (`main.js`, `preload.js`)
 - `src/html` – HTML entry (`index.html`, optional CSS in `style.css`)
 - `src/renderer` – Renderer source (`renderer.js`) and bundled file (`bundle.js`)
+- `src/engine` – Analysis library (TypeScript). Edit the `.ts` files; `dist/` is compiled output.
 
 ## Setup
 
@@ -23,9 +24,10 @@ npm start
 ```
 
 This will:
-1. Run webpack to bundle `src/renderer/renderer.js` into `src/renderer/bundle.js`.
-2. Start Electron using `src/main/main.js`, which loads `src/html/index.html`.
-3. The loaded HTML will load `src/renderer/bundle.js`.
+1. Compile `src/engine/*.ts` into `src/engine/dist`.
+2. Run webpack to bundle `src/renderer/renderer.js` into `src/renderer/bundle.js`.
+3. Start Electron using `src/main/main.js`, which loads `src/html/index.html`.
+4. The loaded HTML will load `src/renderer/bundle.js`.
 
 ```mermaid
 graph TD
@@ -37,7 +39,8 @@ graph TD
 
 ## Where to edit
 
-- Change visualizations in `src/renderer/renderer.js`.
+- Change visualizations in `src/renderer/renderer.js` (matrix and graph live in their own files next to it).
+- Change analysis in `src/engine/*.ts`. Do not edit `src/engine/dist`.
 - Adjust HTML in `src/html/index.html`.
 - Optional styling in `src/html/style.css`.
 

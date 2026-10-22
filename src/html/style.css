@@ -1,4 +1,217 @@
 body {
   background-color: #202020;
-  color: #757575;
+  color: #b0b0b0;
+  font-family: system-ui, sans-serif;
+  margin: 16px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+#controls button {
+  margin-right: 8px;
+  padding: 6px 12px;
+  background: #2d2d2d;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#controls button:hover {
+  background: #3a3a3a;
+}
+
+#view-toggle {
+  margin-left: 16px;
+  padding-left: 16px;
+  border-left: 1px solid #444;
+}
+
+#view-toggle button.active {
+  background: #4e79a7;
+  border-color: #4e79a7;
+  color: #fff;
+}
+
+#status {
+  color: #8a8a8a;
+  font-size: 13px;
+}
+
+#legend {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+#legend span {
+  margin-right: 18px;
+}
+
+#legend .swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border-radius: 2px;
+}
+
+#legend .swatch.divergent {
+  background: #e5484d;
+}
+
+#legend .swatch.convergent {
+  background: #8a8f98;
+}
+
+#legend .swatch.absent {
+  border: 1px dashed #8a8f98;
+  width: 9px;
+  height: 9px;
+}
+
+#legend-note {
+  color: #666;
+}
+
+.matrix .label {
+  fill: #c0c0c0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.matrix .label.offender {
+  fill: #e5484d;
+}
+
+.matrix .label:hover {
+  fill: #ffffff;
+}
+
+.matrix .count {
+  fill: #8a8a8a;
+  font-size: 11px;
+}
+
+.matrix .caption {
+  fill: #666;
+  font-size: 11px;
+}
+
+#spec-output {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 12px;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+#stats {
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+#stats span {
+  margin-right: 16px;
+}
+
+#stats span.divergent {
+  color: #e5484d;
+  font-weight: 600;
+}
+
+#vis text {
+  fill: #c0c0c0;
+  font-size: 12px;
+}
+
+#details {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 340px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  overflow-y: auto;
+  background: #1a1a1a;
+  border-left: 1px solid #444;
+  z-index: 10;
+}
+
+#details-close {
+  float: right;
+  background: none;
+  border: none;
+  color: #b0b0b0;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+#details-close:hover {
+  color: #e0e0e0;
+}
+
+#details h2 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  color: #e0e0e0;
+}
+
+#details h3 {
+  margin: 16px 0 6px 0;
+  font-size: 13px;
+  color: #8a8a8a;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#details .file-count {
+  margin: 0;
+  font-size: 13px;
+  color: #8a8a8a;
+}
+
+#details .file-count.divergent {
+  color: #e5484d;
+}
+
+#details .edge-item {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #c0c0c0;
+}
+
+#details .edge-item.divergent {
+  color: #e5484d;
+}
+
+#details .edge-examples {
+  margin: 2px 0 0 14px;
+  font-size: 11px;
+  color: #8a8a8a;
+  font-family: Consolas, monospace;
+}
+
+#details .none {
+  font-size: 13px;
+  color: #666;
+  font-style: italic;
+}
+
+#details .file-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+#details .file-link:hover {
+  color: #e0e0e0;
 }

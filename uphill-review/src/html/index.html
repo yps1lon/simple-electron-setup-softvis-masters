@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Uphill imports</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header id="top">
+      <h1>Uphill imports</h1>
+      <div id="controls">
+        <button id="pick-repo" type="button">Pick repo…</button>
+        <label for="base-ref">base</label>
+        <input id="base-ref" value="main" size="12" spellcheck="false"
+               title="The branch the pull request goes into. The checked-out branch is reviewed against it." />
+        <label for="months">history</label>
+        <select id="months" title="How far back the stability race goes">
+          <option value="6">6 months</option>
+          <option value="12" selected>12 months</option>
+          <option value="24">24 months</option>
+        </select>
+        <button id="review" class="primary" type="button"
+                title="Find the uphill imports the checked-out branch adds">Review change</button>
+      </div>
+      <p id="status">Pick a repository, check out the pull request's branch in it, and click Review change.</p>
+      <div id="stats"></div>
+    </header>
+
+    <main id="app" hidden>
+      <aside id="list" aria-label="Uphill links in this change"></aside>
+      <section id="views">
+        <div id="tabs" role="tablist" aria-label="Views">
+          <button id="tab-ladder" role="tab" type="button" aria-controls="view-ladder" aria-selected="true">Ladder<small>this change</small></button>
+          <button id="tab-matrix" role="tab" type="button" aria-controls="view-matrix" aria-selected="false">Matrix<small>whole codebase</small></button>
+          <button id="tab-race" role="tab" type="button" aria-controls="view-race" aria-selected="false">History<small>stability race</small></button>
+        </div>
+        <div id="view-ladder" role="tabpanel" aria-labelledby="tab-ladder"></div>
+        <div id="view-matrix" role="tabpanel" aria-labelledby="tab-matrix" hidden></div>
+        <div id="view-race" role="tabpanel" aria-labelledby="tab-race" hidden></div>
+      </section>
+      <aside id="panel" aria-label="Details"></aside>
+    </main>
+
+    <div id="tip" role="tooltip" hidden></div>
+    <script src="../renderer/bundle.js"></script>
+  </body>
+</html>

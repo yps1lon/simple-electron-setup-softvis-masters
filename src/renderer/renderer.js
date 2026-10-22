@@ -1,64 +1,133 @@
-import * as d3 from "d3";
-// Read the documentation at https://d3js.org/getting-started
+import { drawGraph } from "./graph.js";
+import { drawMatrix, layerOrder } from "./matrix.js";
+import { guard, setStatus } from "./status.js";
 
-// When the DOM is loaded, create the visualization
+// The app shell: holds the state, wires the buttons, talks to main through
+// the preload bridge and hands the result to whichever view is selected.
+// The drawing itself lives in matrix.js and graph.js, the side panel in
+// details.js.
+
+// Renderer state is just the two paths the user picked; everything else is
+// derived from the latest AnalysisResult handed over the preload bridge.
+let repoPath = null;
+let specPath = null;
+
+// The last AnalysisResult, kept so switching views re-renders without a
+// re-analysis; and which idiom is showing. Matrix is the primary view.
+let lastResult = null;
+let view = "matrix";
+
+// Returned by whichever draw function ran last, so the panel's close button
+// (wired once at startup) clears the selection of the view on screen.
+let clearSelection = null;
+
 window.addEventListener("DOMContentLoaded", () => {
-
-  // Hardcoded data (you will replace this with loaded or generated data)
-  const data = [5, 10, 15, 20, 25];
-
-  // Set the dimensions and margins of the graph
-  const width = 400;
-  const height = 200;
-  const margin = { top: 0, right: 0, bottom: 20, left: 20 }; // Needed for the axes to be visible
-
-  // Create the parent SVG element - needed for SVG elements to be appended to it
-  const svg = d3
-    .select("#vis")
-    .append("svg")
-    .attr("width", width)
-    .attr("height", height);
-
-  // SCALES: https://d3js.org/d3-scale
-  // Create the x scale
-  const scaleX = d3
-    .scaleBand()
-    .domain(data.map((_, i) => i)) // 0, 1, 2, 3, 4
-    .range([margin.left, width])
-    .padding(0.1);
-
-  // Create the y scale
-  const scaleY = d3
-    .scaleLinear()
-    .domain([0, d3.max(data) || 0])
-    .range([height - margin.bottom, 0]);
-
-  // Create and append the bars to the SVG
-  svg
-    .selectAll("rect")
-    .data(data)
-    .enter()
-    .append("rect")
-    .attr("x", (_, i) => scaleX(i))
-    .attr("y", d => scaleY(d))
-    .attr("width", scaleX.bandwidth())
-    .attr("height", d => scaleY(0) - scaleY(d))
-    .attr("fill", "#4e79a7");
-
-  // Create the x-axis
-  const xAxis = g =>
-    g
-      .attr("transform", `translate(0,${height - margin.bottom})`)
-      .call(d3.axisBottom(scaleX).tickFormat(i => i + 1));
-
-  // Create the y-axis
-  const yAxis = g =>
-    g
-      .attr("transform", `translate(${margin.left},0)`)
-      .call(d3.axisLeft(scaleY).ticks(5));
-
-  // Append the x-axis and y-axis to the SVG
-  svg.append("g").call(xAxis);
-  svg.append("g").call(yAxis);
+  document.getElementById("pick-repo").addEventListener("click", onPickRepo);
+  document.getElementById("propose-spec").addEventListener("click", onProposeSpec);
+  document.getElementById("load-spec").addEventListener("click", onLoadSpec);
+  document.getElementById("analyze").addEventListener("click", onAnalyze);
+  document.getElementById("export-mermaid").addEventListener("click", onExportMermaid);
+  document.getElementById("details-close").addEventListener("click", () => {
+    if (clearSelection !== null) clearSelection();
+  });
+  document.getElementById("view-matrix").addEventListener("click", () => {
+    view = "matrix";
+    render();
+  });
+  document.getElementById("view-graph").addEventListener("click", () => {
+    view = "graph";
+    render();
+  });
 });
 
+async function onPickRepo() {
+  const picked = await window.drift.pickFolder();
+  if (picked !== null) {
+    repoPath = picked;
+    setStatus(`repo: ${repoPath}`);
+  }
+}
+
+async function onProposeSpec() {
+  if (repoPath === null) {
+    setStatus("pick a repository first");
+    return;
+  }
+  await guard(async () => {
+    const yaml = await window.drift.propose(repoPath);
+    const pre = document.getElementById("spec-output");
+    pre.hidden = false;
+    pre.textContent = yaml;
+    setStatus("proposed spec below — save it as .yaml, fill in `allowed`, then load it");
+  });
+}
+
+async function onLoadSpec() {
+  const picked = await window.drift.pickSpec();
+  if (picked !== null) {
+    specPath = picked;
+    setStatus(`spec: ${specPath}`);
+  }
+}
+
+async function onAnalyze() {
+  if (repoPath === null || specPath === null) {
+    setStatus("pick a repository and load a spec first");
+    return;
+  }
+  await guard(async () => {
+    lastResult = await window.drift.analyze(repoPath, specPath);
+    renderStats(lastResult.stats);
+    render();
+    setStatus(`analyzed ${lastResult.root}`);
+  });
+}
+
+// Exports whichever view is on screen. The matrix export gets the same
+// row order the drawing used (layerOrder is deterministic), so the file
+// and the screen agree cell for cell.
+async function onExportMermaid() {
+  if (lastResult === null) {
+    setStatus("analyze a repository first");
+    return;
+  }
+  await guard(async () => {
+    const order = view === "matrix" ? layerOrder(lastResult) : null;
+    const saved = await window.drift.exportMermaid(lastResult, view, order);
+    setStatus(saved === null ? "export cancelled" : `exported ${view} to ${saved}`);
+  });
+}
+
+function render() {
+  if (lastResult === null) return;
+  document.getElementById("view-matrix").classList.toggle("active", view === "matrix");
+  document.getElementById("view-graph").classList.toggle("active", view === "graph");
+  document.getElementById("legend").hidden = false;
+  document.getElementById("legend-note").textContent =
+    view === "matrix"
+      ? "row imports column · stronger colour = more file imports · red below the diagonal = layer inversion"
+      : "arrow points at the imported module · thicker = divergent · red node = imports something forbidden";
+  clearSelection = view === "matrix" ? drawMatrix(lastResult) : drawGraph(lastResult);
+}
+
+function renderStats(stats) {
+  const bar = document.getElementById("stats");
+  bar.replaceChildren();
+  const items = [
+    ["files", stats.fileCount],
+    ["imports", stats.importCount],
+    ["divergent", stats.divergent],
+    ["absent", stats.absent],
+    ["convergent", stats.convergent],
+    ["unmapped files", stats.unmappedFiles],
+    ["unresolved imports", stats.unresolvedImports]
+  ];
+  for (const [label, value] of items) {
+    const chip = document.createElement("span");
+    chip.textContent = `${label}: ${value}`;
+    if (label === "divergent" && value > 0) {
+      chip.className = "divergent";
+    }
+    bar.appendChild(chip);
+  }
+}
