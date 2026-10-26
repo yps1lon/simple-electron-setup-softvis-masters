@@ -803,6 +803,53 @@ svg.matrix {
   color: var(--ink);
 }
 
+/* ---- treemap: light cells on the dark desk, so the map is the bright thing ---- */
+
+.treemap text {
+  fill: #1a1a1a;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.treemap text .count {
+  fill-opacity: 0.62;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.treemap rect.leaf {
+  cursor: pointer;
+}
+
+.treemap rect.leaf:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.treemap g:hover rect.leaf {
+  filter: brightness(1.06);
+}
+
+.treemap rect.mark,
+.treemap rect.focus {
+  fill: none;
+  pointer-events: none;
+}
+
+.treemap rect.mark {
+  stroke: var(--up);
+  stroke-width: 2;
+}
+
+.treemap rect.mark.on {
+  stroke-width: 3.5;
+}
+
+.treemap rect.focus {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
 /* ---- tooltip ---- */
 
 #tip {

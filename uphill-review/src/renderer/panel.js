@@ -9,7 +9,7 @@ import { baseName, commitLine, decisionLabel, el, fileLink, plural, shortName } 
 export function renderPanel(container, review, selection, on) {
   container.replaceChildren();
   if (selection === null) {
-    container.append(el("p", "empty", "Select a link in the list, the matrix or the history to see it here."));
+    container.append(el("p", "empty", "Select a link in the list, the matrix, the treemap or the history to see it here."));
     return;
   }
   if (selection.type === "link") linkDetails(container, review, selection.link, on);

@@ -1,15 +1,19 @@
 import { drawLadder } from "./ladder.js";
 import { renderList } from "./list.js";
-import { defaultLevel, drawMatrix } from "./matrix.js";
+import { defaultLevel, drawMatrix, mergeFolder } from "./matrix.js";
 import { renderPanel } from "./panel.js";
 import { drawRace } from "./race.js";
 import { guard, setStatus } from "./status.js";
+import { drawTreemap } from "./treemap.js";
 import { baseName, decisionLabel, el, hideTip, plural } from "./ui.js";
 
-// The app shell: one review at a time, three linked views and a side panel.
-// Selecting a link anywhere (the list, a matrix cell, a line in the race)
-// selects it everywhere. Main keeps no state; the renderer holds the review
-// it was handed and updates it in place when a decision is recorded.
+// The app shell: one review at a time, four linked views and a side panel.
+// Selecting a link anywhere (the list, a matrix cell, a treemap folder, a
+// line in the race) selects it everywhere. Main keeps no state; the renderer
+// holds the review it was handed and updates it in place when a decision is
+// recorded.
+
+const TABS = ["ladder", "matrix", "treemap", "race"];
 
 const state = {
   repoPath: null,
@@ -19,6 +23,9 @@ const state = {
   // { type: "pair", from, to, depth } for any folder link in the codebase.
   selection: null,
   matrixLevel: 0,
+  // null level means the most detailed treemap (every folder).
+  treemapLevel: null,
+  treemapFocus: null,
   race: { folder: null, dep: null, tol: 0.2 },
 };
 
@@ -27,7 +34,7 @@ const byId = (id) => document.getElementById(id);
 window.addEventListener("DOMContentLoaded", () => {
   byId("pick-repo").addEventListener("click", onPickRepo);
   byId("review").addEventListener("click", onReview);
-  for (const tab of ["ladder", "matrix", "race"]) byId(`tab-${tab}`).addEventListener("click", () => showTab(tab));
+  for (const tab of TABS) byId(`tab-${tab}`).addEventListener("click", () => showTab(tab));
   let timer = null;
   window.addEventListener("resize", () => {
     clearTimeout(timer);
@@ -57,6 +64,8 @@ async function onReview() {
     const first = review.links[0] ?? null;
     state.selection = first ? { type: "link", id: first.id } : null;
     state.matrixLevel = defaultLevel(review.matrix);
+    state.treemapLevel = review.matrix.levels.length - 1;
+    state.treemapFocus = null;
     state.race = { folder: first ? first.from : mostImported(review), dep: first ? first.to : null, tol: 0.2 };
     byId("app").hidden = false;
     render();
@@ -76,7 +85,7 @@ function render() {
 
 function showTab(tab) {
   state.tab = tab;
-  for (const t of ["ladder", "matrix", "race"]) {
+  for (const t of TABS) {
     byId(`tab-${t}`).setAttribute("aria-selected", String(t === tab));
     byId(`view-${t}`).hidden = t !== tab;
   }
@@ -94,6 +103,21 @@ function drawView() {
       box.replaceChildren(el("p", "empty",
         "The ladder shows the uphill links this change added. The selected link was not added by it; see the panel, the matrix and the history."));
     } else drawLadder(byId("view-ladder"), link);
+  } else if (state.tab === "treemap") {
+    const levels = review.matrix.levels;
+    const levelIndex = state.treemapLevel === null ? levels.length - 1 : Math.min(state.treemapLevel, levels.length - 1);
+    drawTreemap(byId("view-treemap"), review, {
+      levelIndex,
+      selected: selectedPair(),
+      focus: state.treemapFocus,
+    }, {
+      level: (i) => {
+        state.treemapLevel = i;
+        state.treemapFocus = null;
+        drawView();
+      },
+      pick: (name) => pickTreemapFolder(name, levels[levelIndex].depth),
+    });
   } else if (state.tab === "matrix") {
     drawMatrix(byId("view-matrix"), review, { levelIndex: state.matrixLevel, selected: selectedPair(), meant: meantLinks() }, {
       level: (i) => {
@@ -129,8 +153,20 @@ function selectLink(id) {
   const link = state.review.links.find((l) => l.id === id);
   if (link === undefined) return;
   state.selection = { type: "link", id };
+  state.treemapFocus = null;
   state.race = { ...state.race, folder: link.from, dep: link.to };
   render();
+}
+
+function pickTreemapFolder(name, depth) {
+  const links = state.review.links.filter((l) => mergeFolder(l.from, depth) === name || mergeFolder(l.to, depth) === name);
+  if (links.length > 0) {
+    links.sort((a, b) => b.gap - a.gap);
+    selectLink(links[0].id);
+    return;
+  }
+  state.treemapFocus = name;
+  drawView();
 }
 
 function selectPair({ from, to, depth }) {
