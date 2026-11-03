@@ -234,6 +234,7 @@ button.on {
 
 #tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 10px;
 }
@@ -975,6 +976,16 @@ svg.matrix {
 .treemap rect.end {
   stroke: #f4f4f4;
   stroke-width: 1.5;
+}
+
+.cascade rect.frame,
+.cascade rect.cell {
+  cursor: pointer;
+}
+
+.cascade rect.frame {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1;
 }
 
 /* ---- tooltip ---- */
