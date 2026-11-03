@@ -803,18 +803,42 @@ svg.matrix {
   color: var(--ink);
 }
 
-/* ---- treemap: light cells on the dark desk, so the map is the bright thing ---- */
+/* ---- treemap: grey (stable) to red (unstable), blue arrows for dependencies ---- */
+
+.instability-scale {
+  align-items: center;
+}
+
+.scale-bar {
+  display: inline-block;
+  width: 112px;
+  height: 8px;
+  margin: 0 6px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgb(110, 110, 114), rgb(229, 72, 77));
+}
 
 .treemap text {
-  fill: #1a1a1a;
+  fill: #f4f4f4;
   font-size: 11px;
   pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .treemap text .count {
-  fill-opacity: 0.62;
+  fill-opacity: 0.9;
   font-variant-numeric: tabular-nums;
   font-size: 10px;
+}
+
+.treemap text.weight {
+  fill: #d6e8ff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  stroke-width: 3.5px;
 }
 
 .treemap rect.leaf {
@@ -827,27 +851,41 @@ svg.matrix {
 }
 
 .treemap g:hover rect.leaf {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
 }
 
-.treemap rect.mark,
-.treemap rect.focus {
+.treemap .dep {
   fill: none;
+  stroke: #5aa2ff;
+  stroke-linecap: round;
   pointer-events: none;
 }
 
-.treemap rect.mark {
-  stroke: var(--up);
-  stroke-width: 2;
+.treemap .dep.on {
+  stroke: #e7f1ff;
 }
 
-.treemap rect.mark.on {
-  stroke-width: 3.5;
+.treemap .dep-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+
+.treemap rect.focus,
+.treemap rect.end {
+  fill: none;
+  pointer-events: none;
 }
 
 .treemap rect.focus {
   stroke: var(--accent);
   stroke-width: 2.5;
+}
+
+.treemap rect.end {
+  stroke: #f4f4f4;
+  stroke-width: 1.5;
 }
 
 /* ---- tooltip ---- */

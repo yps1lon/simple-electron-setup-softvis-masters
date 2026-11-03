@@ -26,6 +26,8 @@ const state = {
   // null level means the most detailed treemap (every folder).
   treemapLevel: null,
   treemapFocus: null,
+  // 0 shows every dependency arrow. Above that, only uphill links of at least this gap.
+  treemapSteepness: 0,
   race: { folder: null, dep: null, tol: 0.2 },
 };
 
@@ -66,6 +68,7 @@ async function onReview() {
     state.matrixLevel = defaultLevel(review.matrix);
     state.treemapLevel = review.matrix.levels.length - 1;
     state.treemapFocus = null;
+    state.treemapSteepness = 0;
     state.race = { folder: first ? first.from : mostImported(review), dep: first ? first.to : null, tol: 0.2 };
     byId("app").hidden = false;
     render();
@@ -108,6 +111,7 @@ function drawView() {
     const levelIndex = state.treemapLevel === null ? levels.length - 1 : Math.min(state.treemapLevel, levels.length - 1);
     drawTreemap(byId("view-treemap"), review, {
       levelIndex,
+      steepness: state.treemapSteepness,
       selected: selectedPair(),
       focus: state.treemapFocus,
     }, {
@@ -116,7 +120,12 @@ function drawView() {
         state.treemapFocus = null;
         drawView();
       },
+      steepness: (value) => {
+        state.treemapSteepness = value;
+        drawView();
+      },
       pick: (name) => pickTreemapFolder(name, levels[levelIndex].depth),
+      link: ({ from, to }) => selectPair({ from, to, depth: levels[levelIndex].depth }),
     });
   } else if (state.tab === "matrix") {
     drawMatrix(byId("view-matrix"), review, { levelIndex: state.matrixLevel, selected: selectedPair(), meant: meantLinks() }, {

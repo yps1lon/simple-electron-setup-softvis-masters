@@ -1,44 +1,31 @@
 import { hierarchy, treemap } from "d3-hierarchy";
-import { mergeFolder } from "./matrix.js";
 import { el, hover, plural, segmented, svgEl } from "./ui.js";
 
 /**
- * A treemap of the whole codebase, laid out the way the D3 treemap is
- * (squarify, one rectangle per folder, area = a quantity, colour = which
- * group the folder belongs to). Here the quantity is architecture files,
- * and the group is the part of the tree you can still tell apart: usually
- * src/core, src/features, src/ui, and so on, rather than one colour for
- * all of src.
+ * A treemap of the folders at one depth. Area is how many architecture
+ * files the folder holds. Colour is instability, grey at 0 and red at 1,
+ * so a dependency that runs from a greyer cell into a redder one is uphill.
  *
- * Red is not a group colour. It stays the outline of an uphill link, the
- * same alarm as the other views. The thicker outline is the link selected
- * in the list.
+ * Every dependency is an arrow, thicker when more files import across it,
+ * with that count written on the line. Steepness hides arrows that do not
+ * climb by at least the chosen gap: 0.2 to 0.8 is a steepness of 0.6.
  */
 
-// Light fills so the labels stay dark and the map reads as the bright
-// object on the dark desk. Red is left out on purpose.
-const AREA_COLOURS = [
-  "#8fb4d9",
-  "#9dcea0",
-  "#f0c48a",
-  "#d7c36a",
-  "#a9d4d1",
-  "#d4b4d0",
-  "#d2b8a6",
-  "#b7c3e3",
-  "#c5d6a1",
-  "#c8beb4",
-];
+const STABLE = [110, 110, 114];
+const UNSTABLE = [229, 72, 77];
+const LINK = "#5aa2ff";
+const LINK_ON = "#e7f1ff";
 
 /**
- * @param view { levelIndex, selected: {from, to} | null, focus: folder name | null }
- * @param on   { level(i), pick(folderName) }
+ * @param view { levelIndex, steepness, selected: {from, to} | null, focus: folder name | null }
+ * @param on   { level(i), steepness(value), pick(folderName), link({from, to}) }
  */
 export function drawTreemap(container, review, view, on) {
   container.replaceChildren();
   const levels = review.matrix.levels;
   const level = levels[Math.min(view.levelIndex, levels.length - 1)];
   const depth = level.depth;
+  const steepness = view.steepness ?? 0;
 
   const head = el("div", "view-head");
   head.append(segmented(
@@ -51,11 +38,21 @@ export function drawTreemap(container, review, view, on) {
     on.level,
     "Folder depth",
   ));
-  const files = level.folders.reduce((n, f) => n + f.files, 0);
-  head.append(el("p", "view-summary",
-    `${plural(files, "architecture file")} in ${plural(level.folders.length, "folder")}. ` +
-    "Area is how many files sit in a folder. Colour is which part of the codebase that folder belongs to. " +
-    "A red outline marks a folder in an uphill link this change added, and a thicker one is the link you have selected."));
+  head.append(
+    el("span", "lbl", "steepness"),
+    segmented(
+      [
+        { value: 0, label: "all", title: "Every dependency between these folders" },
+        { value: 0.2, label: "0.2", title: "Only links that run uphill by 0.2 or more" },
+        { value: 0.4, label: "0.4", title: "Only links that run uphill by 0.4 or more" },
+        { value: 0.6, label: "0.6", title: "Only links that run uphill by 0.6 or more" },
+        { value: 0.8, label: "0.8", title: "Only links that run uphill by 0.8 or more" },
+      ],
+      steepness,
+      on.steepness,
+      "Uphill steepness",
+    ),
+  );
   container.append(head);
 
   if (level.folders.length === 0) {
@@ -66,38 +63,37 @@ export function drawTreemap(container, review, view, on) {
   const tree = codebaseTree(level.folders);
   const width = Math.max(280, Math.floor(container.clientWidth || 640));
   const height = Math.max(380, Math.min(620, Math.round(width * 0.8)));
-  const root = treemap().size([width, height]).padding(1).round(true)(
+  const root = treemap().size([width, height]).padding(2).round(true)(
     hierarchy(tree).sum((d) => d.value || 0).sort((a, b) => b.value - a.value),
   );
-  const groupDepth = groupingDepth(root);
   const leaves = root.leaves().filter((d) => d.value > 0 && d.data.folder);
+  const byName = new Map(leaves.map((d) => [d.data.folder.name, d]));
 
-  const areaOf = (leaf) => {
-    let node = leaf;
-    while (node.parent && node.depth > groupDepth + 1) node = node.parent;
-    return node.data.path || node.data.name;
-  };
-  const areaNames = [...new Set(leaves.map(areaOf))].sort((a, b) => a.localeCompare(b));
-  const colourOf = new Map(areaNames.map((name, i) => [name, areaColour(i)]));
-  const areaFiles = new Map();
-  for (const leaf of leaves) {
-    const area = areaOf(leaf);
-    areaFiles.set(area, (areaFiles.get(area) ?? 0) + leaf.value);
+  const edges = [];
+  let maxCount = 1;
+  for (const [row, col, count] of level.cells) {
+    const from = level.folders[row];
+    const to = level.folders[col];
+    if (from.name === to.name) continue;
+    const gap = to.instability - from.instability;
+    if (steepness > 0 && gap < steepness - 1e-9) continue;
+    const source = byName.get(from.name);
+    const target = byName.get(to.name);
+    if (source === undefined || target === undefined) continue;
+    maxCount = Math.max(maxCount, count);
+    edges.push({ from, to, count, gap, source, target });
   }
+  edges.sort((a, b) => a.count - b.count);
 
-  const legend = el("div", "legend");
-  for (const [name, count] of [...areaFiles.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
-    legend.append(swatch(colourOf.get(name), `${labelOf(name)} (${count})`));
-  }
-  container.append(legend);
-
-  const flagged = new Set();
-  for (const link of review.links) {
-    flagged.add(mergeFolder(link.from, depth));
-    flagged.add(mergeFolder(link.to, depth));
-  }
-  const selectedFrom = view.selected ? mergeFolder(view.selected.from, depth) : null;
-  const selectedTo = view.selected ? mergeFolder(view.selected.to, depth) : null;
+  const files = level.folders.reduce((n, f) => n + f.files, 0);
+  const summary = el("p", "view-summary",
+    `${plural(files, "architecture file")} in ${plural(level.folders.length, "folder")}. ` +
+    "Colour is instability: grey is stable (0), red is unstable (1). " +
+    "An arrow runs from the folder that imports to the folder it imports. " +
+    `Thickness is how many files import across it. ${edges.length} of ${level.cells.length} dependencies shown` +
+    (steepness > 0 ? `, uphill by ${steepness.toFixed(1)} or more.` : "."));
+  container.append(summary);
+  container.append(instabilityScale());
 
   const svg = svgEl("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -106,8 +102,15 @@ export function drawTreemap(container, review, view, on) {
     class: "treemap",
     role: "img",
   });
-  svg.setAttribute("aria-label", `Treemap of ${plural(level.folders.length, "folder")}, sized by architecture files`);
+  svg.setAttribute("aria-label",
+    `Treemap of ${plural(level.folders.length, "folder")} coloured by instability, with ${edges.length} dependency arrows`);
   container.append(svg);
+  svg.append(arrowMarker("treemap-arrow", LINK), arrowMarker("treemap-arrow-on", LINK_ON));
+
+  const selectedFrom = view.selected ? view.selected.from : null;
+  const selectedTo = view.selected ? view.selected.to : null;
+  const sameEnds = (edge) => edge.from.name === selectedFrom && edge.to.name === selectedTo
+    || (selectedFrom !== null && mergeAt(selectedFrom, depth) === edge.from.name && mergeAt(selectedTo, depth) === edge.to.name);
 
   leaves.forEach((d, i) => {
     const folder = d.data.folder;
@@ -118,13 +121,12 @@ export function drawTreemap(container, review, view, on) {
       class: "leaf",
       width: w,
       height: h,
-      fill: colourOf.get(areaOf(d)),
+      fill: instabilityColour(folder.instability),
       role: "button",
       tabindex: "0",
-      "aria-label": `${folder.name === "." ? "repository root" : folder.name}, ${plural(folder.files, "file")}`,
+      "aria-label": `${where(folder)}, instability ${folder.instability.toFixed(2)}, ${plural(folder.files, "file")}`,
     });
-    const linksHere = review.links.filter((l) => mergeFolder(l.from, depth) === folder.name || mergeFolder(l.to, depth) === folder.name);
-    hover(rect, () => tip(folder, linksHere));
+    hover(rect, () => tip(folder));
     const activate = () => on.pick(folder.name);
     rect.addEventListener("click", activate);
     rect.addEventListener("keydown", (event) => {
@@ -134,58 +136,177 @@ export function drawTreemap(container, review, view, on) {
       }
     });
     g.append(rect);
+    svg.append(g);
+    d._box = { w, h, i };
+  });
 
-    if (w >= 36 && h >= 18) {
-      const clipId = `treemap-clip-${i}`;
-      const clip = svgEl("clipPath", { id: clipId });
-      clip.append(svgEl("rect", { x: 1, y: 1, width: Math.max(0, w - 2), height: Math.max(0, h - 2) }));
-      g.append(clip);
-      const text = svgEl("text", { "clip-path": `url(#${clipId})` });
-      const name = svgEl("tspan", { x: 4, y: 14 });
-      name.textContent = labelOf(d.data.name);
-      text.append(name);
-      if (h >= 30) {
-        const count = svgEl("tspan", { x: 4, y: 26, class: "count" });
-        count.textContent = String(d.value);
-        text.append(count);
-      }
-      g.append(text);
-    }
+  const links = svgEl("g", { class: "deps" });
+  svg.append(links);
+  for (const edge of edges) {
+    const on = sameEnds(edge);
+    drawEdge(links, edge, maxCount, on, () => on.link({ from: edge.from.name, to: edge.to.name }));
+  }
 
-    const selected = folder.name === selectedFrom || folder.name === selectedTo;
-    if (flagged.has(folder.name) || (view.focus && view.focus === folder.name)) {
-      g.append(svgEl("rect", {
-        class: flagged.has(folder.name) ? (selected ? "mark on" : "mark") : "focus",
-        x: 1.5,
-        y: 1.5,
-        width: Math.max(0, w - 3),
-        height: Math.max(0, h - 3),
-      }));
+  leaves.forEach((d) => {
+    const { w, h, i } = d._box;
+    if (w < 36 || h < 18) return;
+    const g = svgEl("g", { transform: `translate(${d.x0},${d.y0})`, class: "leaf-label" });
+    const clipId = `treemap-clip-${i}`;
+    const clip = svgEl("clipPath", { id: clipId });
+    clip.append(svgEl("rect", { x: 1, y: 1, width: Math.max(0, w - 2), height: Math.max(0, h - 2) }));
+    g.append(clip);
+    const text = svgEl("text", { "clip-path": `url(#${clipId})` });
+    const name = svgEl("tspan", { x: 4, y: 14 });
+    name.textContent = labelOf(d.data.name);
+    text.append(name);
+    if (h >= 30) {
+      const count = svgEl("tspan", { x: 4, y: 26, class: "count" });
+      count.textContent = `I ${d.data.folder.instability.toFixed(2)}`;
+      text.append(count);
     }
+    g.append(text);
     svg.append(g);
   });
+
+  const selected = edges.find(sameEnds);
+  if (view.focus) {
+    const leaf = byName.get(view.focus);
+    if (leaf) ring(svg, leaf, "focus");
+  }
+  if (selected) {
+    ring(svg, selected.source, "end");
+    ring(svg, selected.target, "end");
+  }
 }
 
-function swatch(colour, text) {
-  const item = el("span", "legend-item");
-  const mark = el("i", "sw cell");
-  mark.style.background = colour;
-  item.append(mark, document.createTextNode(text));
-  return item;
+function drawEdge(parent, edge, maxCount, selected, onClick) {
+  const a = center(edge.source);
+  const b = center(edge.target);
+  const line = shorten(a.x, a.y, b.x, b.y, 16);
+  const width = (1.25 + (edge.count / maxCount) * 4).toFixed(2);
+  const path = svgEl("line", {
+    class: selected ? "dep on" : "dep",
+    x1: line.x1,
+    y1: line.y1,
+    x2: line.x2,
+    y2: line.y2,
+    "stroke-width": width,
+    "marker-end": selected ? "url(#treemap-arrow-on)" : "url(#treemap-arrow)",
+  });
+  const hit = svgEl("line", {
+    class: "dep-hit",
+    x1: line.x1,
+    y1: line.y1,
+    x2: line.x2,
+    y2: line.y2,
+    role: "button",
+    tabindex: "0",
+    "aria-label": `${edge.from.name} imports ${edge.to.name}, ${plural(edge.count, "file")}, steepness ${edge.gap.toFixed(2)}`,
+  });
+  const text = () => edgeTip(edge);
+  hover(hit, text);
+  const activate = () => onClick();
+  hit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    activate();
+  });
+  hit.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      activate();
+    }
+  });
+  parent.append(path, hit);
+
+  const len = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
+  if (len < 46) return;
+  const weight = svgEl("text", {
+    class: "weight",
+    x: line.x1 + (line.x2 - line.x1) * 0.55,
+    y: line.y1 + (line.y2 - line.y1) * 0.55,
+    "text-anchor": "middle",
+  });
+  weight.textContent = String(edge.count);
+  parent.append(weight);
 }
 
-function tip(folder, linksHere) {
-  const where = folder.name === "." ? "repository root" : folder.name;
-  const lines = [
-    where,
+function instabilityScale() {
+  const row = el("div", "legend instability-scale");
+  row.append(el("span", "", "0"));
+  row.append(el("i", "scale-bar"));
+  row.append(el("span", "", "1 instability"));
+  return row;
+}
+
+function arrowMarker(id, fill) {
+  const marker = svgEl("marker", {
+    id,
+    viewBox: "0 0 10 10",
+    refX: "9",
+    refY: "5",
+    markerWidth: "6",
+    markerHeight: "6",
+    orient: "auto",
+  });
+  marker.append(svgEl("path", { d: "M 0 1.2 L 10 5 L 0 8.8 z", fill }));
+  return marker;
+}
+
+function ring(svg, leaf, kind) {
+  const w = Math.max(0, leaf.x1 - leaf.x0);
+  const h = Math.max(0, leaf.y1 - leaf.y0);
+  svg.append(svgEl("rect", {
+    class: kind,
+    x: leaf.x0 + 1.5,
+    y: leaf.y0 + 1.5,
+    width: Math.max(0, w - 3),
+    height: Math.max(0, h - 3),
+  }));
+}
+
+function center(leaf) {
+  return { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+}
+
+function shorten(x1, y1, x2, y2, pad) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const cut = Math.min(pad, len * 0.42);
+  return { x1: x1 + ux * 6, y1: y1 + uy * 6, x2: x2 - ux * cut, y2: y2 - uy * cut };
+}
+
+function instabilityColour(value) {
+  const t = Math.min(1, Math.max(0, value));
+  const mix = STABLE.map((channel, i) => Math.round(channel + (UNSTABLE[i] - channel) * t));
+  return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+}
+
+function tip(folder) {
+  return [
+    where(folder),
     `${plural(folder.files, "architecture file")} · instability ${folder.instability.toFixed(2)}`,
     `imported by ${plural(folder.afferent, "file")} · imports ${plural(folder.efferent, "file")} outside`,
-  ];
-  if (linksHere.length > 0) {
-    const top = [...linksHere].sort((a, b) => b.gap - a.gap)[0];
-    lines.push(`click: ${top.from} → ${top.to}, uphill by ${top.gap.toFixed(2)}`);
-  }
-  return lines.join("\n");
+  ].join("\n");
+}
+
+function edgeTip(edge) {
+  const direction = edge.gap > 1e-9
+    ? `uphill by ${edge.gap.toFixed(2)}`
+    : edge.gap < -1e-9
+      ? `downhill by ${Math.abs(edge.gap).toFixed(2)}`
+      : "level";
+  return [
+    `${edge.from.name} → ${edge.to.name}`,
+    `${plural(edge.count, "file import")} · ${direction}`,
+    `I ${edge.from.instability.toFixed(2)} → I ${edge.to.instability.toFixed(2)}`,
+  ].join("\n");
+}
+
+function where(folder) {
+  return folder.name === "." ? "repository root" : folder.name;
 }
 
 function labelOf(name) {
@@ -193,18 +314,11 @@ function labelOf(name) {
   return name.split("/").pop();
 }
 
-/** Walk past a single trunk (a repo that is all under src/) so colour splits the parts you can name. */
-function groupingDepth(root) {
-  let node = root;
-  while (node.children && node.children.length === 1) node = node.children[0];
-  return node.depth;
-}
-
-function areaColour(index) {
-  if (index < AREA_COLOURS.length) return AREA_COLOURS[index];
-  const hue = (index * 137.508) % 360;
-  const avoidRed = hue < 18 || hue > 345 ? (hue + 40) % 360 : hue;
-  return `hsl(${avoidRed.toFixed(0)} 42% 74%)`;
+/** Folder name at this matrix depth. `null` depth leaves the name unchanged. */
+function mergeAt(folder, depth) {
+  if (depth === null || folder === ".") return folder;
+  const parts = folder.split("/");
+  return parts.length <= depth ? folder : parts.slice(0, depth).join("/");
 }
 
 /** Nested folders from the flat matrix list. A folder that has both files and subfolders keeps its own files as a cell inside the group. */
