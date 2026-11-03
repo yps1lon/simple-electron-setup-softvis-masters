@@ -272,6 +272,66 @@ button.on {
   font-size: 13px;
 }
 
+.instability-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.instability-filter input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 160px;
+  height: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgb(110, 110, 114), rgb(229, 72, 77));
+  cursor: pointer;
+}
+
+.instability-filter input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -4px;
+  border: 2px solid #202020;
+  border-radius: 50%;
+  background: #f4f4f4;
+  box-shadow: 0 0 0 1px #9a9a9a;
+  cursor: pointer;
+}
+
+.instability-filter input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.instability-filter input[type="range"]::-moz-range-track {
+  height: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgb(110, 110, 114), rgb(229, 72, 77));
+}
+
+.instability-filter input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #202020;
+  border-radius: 50%;
+  background: #f4f4f4;
+  cursor: pointer;
+}
+
+.filter-value {
+  min-width: 5.2em;
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 .seg {
   display: inline-flex;
   flex-wrap: wrap;
@@ -835,14 +895,38 @@ svg.matrix {
 }
 
 .treemap text.weight {
-  fill: #d6e8ff;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   stroke-width: 3.5px;
 }
 
-.treemap rect.leaf {
+.treemap text.weight.out {
+  fill: #d6e8ff;
+}
+
+.treemap text.weight.in {
+  fill: #ffd4d4;
+}
+
+.sw.line.out {
+  border-top-color: #5aa2ff;
+}
+
+.sw.line.in {
+  border-top-color: #ff6b6e;
+}
+
+.treemap rect.leaf,
+.treemap rect.leaf-hit {
   cursor: pointer;
+}
+
+.treemap rect.leaf.dim {
+  opacity: 0.28;
+}
+
+.treemap g.leaf-label.dim {
+  opacity: 0.4;
 }
 
 .treemap rect.leaf:focus-visible {
@@ -856,13 +940,16 @@ svg.matrix {
 
 .treemap .dep {
   fill: none;
-  stroke: #5aa2ff;
   stroke-linecap: round;
   pointer-events: none;
 }
 
-.treemap .dep.on {
-  stroke: #e7f1ff;
+.treemap .dep.out {
+  stroke: #5aa2ff;
+}
+
+.treemap .dep.in {
+  stroke: #ff6b6e;
 }
 
 .treemap .dep-hit {
@@ -873,13 +960,15 @@ svg.matrix {
 }
 
 .treemap rect.focus,
-.treemap rect.end {
+.treemap rect.end,
+.treemap rect.picked {
   fill: none;
   pointer-events: none;
 }
 
-.treemap rect.focus {
-  stroke: var(--accent);
+.treemap rect.focus,
+.treemap rect.picked {
+  stroke: #f4f4f4;
   stroke-width: 2.5;
 }
 

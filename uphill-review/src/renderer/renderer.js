@@ -1,6 +1,6 @@
 import { drawLadder } from "./ladder.js";
 import { renderList } from "./list.js";
-import { defaultLevel, drawMatrix, mergeFolder } from "./matrix.js";
+import { defaultLevel, drawMatrix } from "./matrix.js";
 import { renderPanel } from "./panel.js";
 import { drawRace } from "./race.js";
 import { guard, setStatus } from "./status.js";
@@ -26,7 +26,9 @@ const state = {
   // null level means the most detailed treemap (every folder).
   treemapLevel: null,
   treemapFocus: null,
-  // 0 shows every dependency arrow. Above that, only uphill links of at least this gap.
+  // True only after a To Decide case is chosen in the list. A folder click clears it.
+  treemapCase: false,
+  // 0 shows every dependency arrow. Each tenth above that hides climbs below it, up to 1.
   treemapSteepness: 0,
   race: { folder: null, dep: null, tol: 0.2 },
 };
@@ -68,6 +70,7 @@ async function onReview() {
     state.matrixLevel = defaultLevel(review.matrix);
     state.treemapLevel = review.matrix.levels.length - 1;
     state.treemapFocus = null;
+    state.treemapCase = false;
     state.treemapSteepness = 0;
     state.race = { folder: first ? first.from : mostImported(review), dep: first ? first.to : null, tol: 0.2 };
     byId("app").hidden = false;
@@ -81,7 +84,7 @@ async function onReview() {
 
 function render() {
   renderStats();
-  renderList(byId("list"), state.review, state.selection?.type === "link" ? state.selection.id : null, selectLink);
+  renderList(byId("list"), state.review, state.selection?.type === "link" ? state.selection.id : null, selectListCase);
   drawView();
   renderPanel(byId("panel"), state.review, panelSelection(), panelHandlers);
 }
@@ -114,6 +117,7 @@ function drawView() {
       steepness: state.treemapSteepness,
       selected: selectedPair(),
       focus: state.treemapFocus,
+      compare: state.treemapCase ? openCase() : null,
     }, {
       level: (i) => {
         state.treemapLevel = i;
@@ -124,7 +128,11 @@ function drawView() {
         state.treemapSteepness = value;
         drawView();
       },
-      pick: (name) => pickTreemapFolder(name, levels[levelIndex].depth),
+      pick: (name) => {
+        state.treemapCase = false;
+        state.treemapFocus = state.treemapFocus === name ? null : name;
+        drawView();
+      },
       link: ({ from, to }) => selectPair({ from, to, depth: levels[levelIndex].depth }),
     });
   } else if (state.tab === "matrix") {
@@ -158,6 +166,12 @@ function drawView() {
 // ---------------------------------------------------------------------------
 // Selection, shared by all views
 
+function selectListCase(id) {
+  const link = state.review.links.find((l) => l.id === id);
+  state.treemapCase = link !== undefined && (link.decision === null || link.grew);
+  selectLink(id);
+}
+
 function selectLink(id) {
   const link = state.review.links.find((l) => l.id === id);
   if (link === undefined) return;
@@ -165,17 +179,6 @@ function selectLink(id) {
   state.treemapFocus = null;
   state.race = { ...state.race, folder: link.from, dep: link.to };
   render();
-}
-
-function pickTreemapFolder(name, depth) {
-  const links = state.review.links.filter((l) => mergeFolder(l.from, depth) === name || mergeFolder(l.to, depth) === name);
-  if (links.length > 0) {
-    links.sort((a, b) => b.gap - a.gap);
-    selectLink(links[0].id);
-    return;
-  }
-  state.treemapFocus = name;
-  drawView();
 }
 
 function selectPair({ from, to, depth }) {
@@ -198,6 +201,13 @@ function selectedPair() {
   if (link !== null) return { from: link.from, to: link.to };
   if (state.selection?.type === "pair") return { from: state.selection.from, to: state.selection.to };
   return null;
+}
+
+/** The list case still waiting for a decision, if that is what is selected. */
+function openCase() {
+  const link = selectedLink();
+  if (link === null || (link.decision !== null && !link.grew)) return null;
+  return { from: link.from, to: link.to };
 }
 
 function panelSelection() {

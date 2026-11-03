@@ -7,56 +7,54 @@ import { el, hover, plural, segmented, svgEl } from "./ui.js";
  * so a dependency that runs from a greyer cell into a redder one is uphill.
  *
  * Every dependency is an arrow, thicker when more files import across it,
- * with that count written on the line. Steepness hides arrows that do not
- * climb by at least the chosen gap: 0.2 to 0.8 is a steepness of 0.6.
+ * with that count written on the line. Click a folder to keep only the
+ * arrows that touch it: blue leaves the folder (what it imports), red
+ * arrives (what depends on it). Choosing a case in the list shows only the
+ * arrow between the two folders it compares; clicking a folder always
+ * shows that folder, including one that belongs to a case. The instability slider hides
+ * arrows that climb by less than the chosen value, in steps of 0.1 from
+ * 0 (every arrow) through 1.
  */
 
 const STABLE = [110, 110, 114];
 const UNSTABLE = [229, 72, 77];
-const LINK = "#5aa2ff";
-const LINK_ON = "#e7f1ff";
+const OUT = "#5aa2ff";
+const IN = "#ff6b6e";
 
 /**
- * @param view { levelIndex, steepness, selected: {from, to} | null, focus: folder name | null }
+ * @param view { levelIndex, steepness, selected: {from, to} | null, focus: folder name | null, compare: {from, to} | null }
  * @param on   { level(i), steepness(value), pick(folderName), link({from, to}) }
  */
 export function drawTreemap(container, review, view, on) {
-  container.replaceChildren();
   const levels = review.matrix.levels;
   const level = levels[Math.min(view.levelIndex, levels.length - 1)];
   const depth = level.depth;
-  const steepness = view.steepness ?? 0;
+  const steepness = snapInstability(view.steepness ?? 0);
+  const range = container.querySelector(".instability-range");
+  const dragging = range !== null && range.dataset.dragging === "1";
 
-  const head = el("div", "view-head");
-  head.append(segmented(
-    levels.map((l, i) => ({
-      value: i,
-      label: l.depth === null ? `every folder (${l.folders.length})` : `depth ${l.depth} (${l.folders.length})`,
-      title: l.depth === null ? "Each folder on its own" : `Folders merged to their first ${l.depth} path segments`,
-    })),
-    view.levelIndex,
-    on.level,
-    "Folder depth",
-  ));
-  head.append(
-    el("span", "lbl", "steepness"),
-    segmented(
-      [
-        { value: 0, label: "all", title: "Every dependency between these folders" },
-        { value: 0.2, label: "0.2", title: "Only links that run uphill by 0.2 or more" },
-        { value: 0.4, label: "0.4", title: "Only links that run uphill by 0.4 or more" },
-        { value: 0.6, label: "0.6", title: "Only links that run uphill by 0.6 or more" },
-        { value: 0.8, label: "0.8", title: "Only links that run uphill by 0.8 or more" },
-      ],
-      steepness,
-      on.steepness,
-      "Uphill steepness",
-    ),
-  );
-  container.append(head);
+  let body = container.querySelector(":scope > .treemap-body");
+  if (!dragging || body === null) {
+    container.replaceChildren();
+    const head = el("div", "view-head");
+    body = el("div", "treemap-body");
+    head.append(segmented(
+      levels.map((l, i) => ({
+        value: i,
+        label: l.depth === null ? `every folder (${l.folders.length})` : `depth ${l.depth} (${l.folders.length})`,
+        title: l.depth === null ? "Each folder on its own" : `Folders merged to their first ${l.depth} path segments`,
+      })),
+      view.levelIndex,
+      on.level,
+      "Folder depth",
+    ));
+    head.append(instabilitySlider(steepness, on.steepness));
+    container.append(head, body);
+  }
+  body.replaceChildren();
 
   if (level.folders.length === 0) {
-    container.append(el("p", "empty", "This repository has no architecture files to map."));
+    body.append(el("p", "empty", "This repository has no architecture files to map."));
     return;
   }
 
@@ -69,31 +67,60 @@ export function drawTreemap(container, review, view, on) {
   const leaves = root.leaves().filter((d) => d.value > 0 && d.data.folder);
   const byName = new Map(leaves.map((d) => [d.data.folder.name, d]));
 
-  const edges = [];
-  let maxCount = 1;
+  const focus = view.focus && byName.has(view.focus) ? view.focus : null;
+  const caseOn = view.compare ?? null;
+  const compareFrom = caseOn ? mergeAt(caseOn.from, depth) : null;
+  const compareTo = caseOn ? mergeAt(caseOn.to, depth) : null;
+  const compare = focus === null && caseOn !== null ? caseOn : null;
+  const matchesCase = (edge) => edge.from.name === compareFrom && edge.to.name === compareTo;
+  const candidates = [];
   for (const [row, col, count] of level.cells) {
     const from = level.folders[row];
     const to = level.folders[col];
     if (from.name === to.name) continue;
-    const gap = to.instability - from.instability;
-    if (steepness > 0 && gap < steepness - 1e-9) continue;
     const source = byName.get(from.name);
     const target = byName.get(to.name);
     if (source === undefined || target === undefined) continue;
-    maxCount = Math.max(maxCount, count);
-    edges.push({ from, to, count, gap, source, target });
+    candidates.push({ from, to, count, gap: to.instability - from.instability, source, target });
   }
+  const edges = candidates.filter((edge) => {
+    if (compare !== null) return matchesCase(edge);
+    if (steepness > 0 && edge.gap < steepness - 1e-9) return false; // climbs under the slider value are filtered out
+    if (focus !== null && edge.from.name !== focus && edge.to.name !== focus) return false;
+    return true;
+  });
   edges.sort((a, b) => a.count - b.count);
+  const maxCount = Math.max(1, ...edges.map((edge) => edge.count));
+  const outgoing = focus === null ? [] : edges.filter((edge) => edge.from.name === focus);
+  const incoming = focus === null ? [] : edges.filter((edge) => edge.to.name === focus);
+  const caseEdge = compare === null ? null : edges.find(matchesCase) ?? null;
+  const near = new Set(focus !== null
+    ? [focus, ...outgoing.map((edge) => edge.to.name), ...incoming.map((edge) => edge.from.name)]
+    : compare !== null ? [compareFrom, compareTo] : []);
 
   const files = level.folders.reduce((n, f) => n + f.files, 0);
-  const summary = el("p", "view-summary",
-    `${plural(files, "architecture file")} in ${plural(level.folders.length, "folder")}. ` +
-    "Colour is instability: grey is stable (0), red is unstable (1). " +
-    "An arrow runs from the folder that imports to the folder it imports. " +
-    `Thickness is how many files import across it. ${edges.length} of ${level.cells.length} dependencies shown` +
-    (steepness > 0 ? `, uphill by ${steepness.toFixed(1)} or more.` : "."));
-  container.append(summary);
-  container.append(instabilityScale());
+  const focusFolder = focus === null ? null : byName.get(focus).data.folder;
+  const summary = el("p", "view-summary", focusFolder
+    ? `${where(focusFolder)} · instability ${focusFolder.instability.toFixed(2)} · ${plural(focusFolder.files, "architecture file")}. ` +
+      `Imported by ${plural(focusFolder.afferent, "file")}, and it imports ${plural(focusFolder.efferent, "file")} outside. ` +
+      `Blue arrows: ${plural(outgoing.length, "folder")} it imports. Red arrows: ${plural(incoming.length, "folder")} that depend on it.` +
+      (steepness > 0 ? ` Climbs under ${steepness.toFixed(1)} instability are hidden.` : "") +
+      " Click the folder again to see every dependency."
+    : compare !== null
+      ? caseSummary(caseOn, caseEdge, compareFrom, compareTo)
+      : `${plural(files, "architecture file")} in ${plural(level.folders.length, "folder")}. ` +
+        "Colour is instability: grey is stable (0), red is unstable (1). " +
+        "Click a folder to see its instability, what it imports (blue) and what depends on it (red). " +
+        `${edges.length} of ${level.cells.length} dependencies shown` +
+        (steepness > 0 ? `. Climbs under ${steepness.toFixed(1)} instability are hidden.` : "."));
+  body.append(summary);
+  const scale = instabilityScale();
+  if (focusFolder) {
+    scale.append(lineKey("out", "blue: it imports"), lineKey("in", "red: they import it"));
+  } else if (caseEdge) {
+    scale.append(lineKey("out", "blue: this case"));
+  }
+  body.append(scale);
 
   const svg = svgEl("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -104,8 +131,8 @@ export function drawTreemap(container, review, view, on) {
   });
   svg.setAttribute("aria-label",
     `Treemap of ${plural(level.folders.length, "folder")} coloured by instability, with ${edges.length} dependency arrows`);
-  container.append(svg);
-  svg.append(arrowMarker("treemap-arrow", LINK), arrowMarker("treemap-arrow-on", LINK_ON));
+  body.append(svg);
+  svg.append(arrowMarker("treemap-arrow-out", OUT), arrowMarker("treemap-arrow-in", IN));
 
   const selectedFrom = view.selected ? view.selected.from : null;
   const selectedTo = view.selected ? view.selected.to : null;
@@ -118,7 +145,7 @@ export function drawTreemap(container, review, view, on) {
     const h = Math.max(0, d.y1 - d.y0);
     const g = svgEl("g", { transform: `translate(${d.x0},${d.y0})` });
     const rect = svgEl("rect", {
-      class: "leaf",
+      class: near.size > 0 && !near.has(folder.name) ? "leaf dim" : "leaf",
       width: w,
       height: h,
       fill: instabilityColour(folder.instability),
@@ -143,14 +170,15 @@ export function drawTreemap(container, review, view, on) {
   const links = svgEl("g", { class: "deps" });
   svg.append(links);
   for (const edge of edges) {
-    const on = sameEnds(edge);
-    drawEdge(links, edge, maxCount, on, () => on.link({ from: edge.from.name, to: edge.to.name }));
+    const direction = focus !== null && edge.to.name === focus ? "in" : "out";
+    drawEdge(links, edge, maxCount, direction, () => on.link({ from: edge.from.name, to: edge.to.name }));
   }
 
   leaves.forEach((d) => {
     const { w, h, i } = d._box;
     if (w < 36 || h < 18) return;
-    const g = svgEl("g", { transform: `translate(${d.x0},${d.y0})`, class: "leaf-label" });
+    const dim = near.size > 0 && !near.has(d.data.folder.name);
+    const g = svgEl("g", { transform: `translate(${d.x0},${d.y0})`, class: dim ? "leaf-label dim" : "leaf-label" });
     const clipId = `treemap-clip-${i}`;
     const clip = svgEl("clipPath", { id: clipId });
     clip.append(svgEl("rect", { x: 1, y: 1, width: Math.max(0, w - 2), height: Math.max(0, h - 2) }));
@@ -168,30 +196,69 @@ export function drawTreemap(container, review, view, on) {
     svg.append(g);
   });
 
-  const selected = edges.find(sameEnds);
-  if (view.focus) {
-    const leaf = byName.get(view.focus);
-    if (leaf) ring(svg, leaf, "focus");
+  if (focus !== null) ring(svg, byName.get(focus), "picked");
+  else if (compare !== null) {
+    const fromLeaf = byName.get(compareFrom);
+    const toLeaf = byName.get(compareTo);
+    if (fromLeaf) ring(svg, fromLeaf, "picked");
+    if (toLeaf && toLeaf !== fromLeaf) ring(svg, toLeaf, "picked");
+  } else {
+    const selected = edges.find(sameEnds);
+    if (selected) {
+      ring(svg, selected.source, "end");
+      ring(svg, selected.target, "end");
+    }
   }
-  if (selected) {
-    ring(svg, selected.source, "end");
-    ring(svg, selected.target, "end");
+
+  for (const d of leaves) {
+    const hit = svgEl("rect", {
+      class: "leaf-hit",
+      x: d.x0,
+      y: d.y0,
+      width: Math.max(0, d.x1 - d.x0),
+      height: Math.max(0, d.y1 - d.y0),
+      fill: "transparent",
+    });
+    hover(hit, () => tip(d.data.folder));
+    hit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      on.pick(d.data.folder.name);
+    });
+    svg.append(hit);
   }
 }
 
-function drawEdge(parent, edge, maxCount, selected, onClick) {
+function caseSummary(link, edge, fromName, toName) {
+  const pair = `${link.from} → ${link.to}`;
+  if (edge) {
+    const climb = edge.gap > 1e-9 ? `, uphill by ${edge.gap.toFixed(2)}` : "";
+    return `${pair}. Instability ${edge.from.instability.toFixed(2)} → ${edge.to.instability.toFixed(2)}${climb}. ` +
+      `Only this arrow is shown: ${edge.from.name} imports ${edge.to.name} (${plural(edge.count, "file")}). ` +
+      "Click a folder to see what else touches it.";
+  }
+  if (fromName === toName) {
+    return `${pair} is the case in To decide. At this depth both folders sit inside ${whereName(fromName)}, so there is no arrow between them. Choose every folder to separate them.`;
+  }
+  return `${pair} is the case in To decide, and this depth has no arrow between those folders.`;
+}
+
+function whereName(name) {
+  return name === "." ? "the repository root" : name;
+}
+
+function drawEdge(parent, edge, maxCount, direction, onClick) {
   const a = center(edge.source);
   const b = center(edge.target);
   const line = shorten(a.x, a.y, b.x, b.y, 16);
   const width = (1.25 + (edge.count / maxCount) * 4).toFixed(2);
   const path = svgEl("line", {
-    class: selected ? "dep on" : "dep",
+    class: `dep ${direction}`,
     x1: line.x1,
     y1: line.y1,
     x2: line.x2,
     y2: line.y2,
     "stroke-width": width,
-    "marker-end": selected ? "url(#treemap-arrow-on)" : "url(#treemap-arrow)",
+    "marker-end": direction === "in" ? "url(#treemap-arrow-in)" : "url(#treemap-arrow-out)",
   });
   const hit = svgEl("line", {
     class: "dep-hit",
@@ -221,13 +288,61 @@ function drawEdge(parent, edge, maxCount, selected, onClick) {
   const len = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
   if (len < 46) return;
   const weight = svgEl("text", {
-    class: "weight",
+    class: `weight ${direction}`,
     x: line.x1 + (line.x2 - line.x1) * 0.55,
     y: line.y1 + (line.y2 - line.y1) * 0.55,
     "text-anchor": "middle",
   });
   weight.textContent = String(edge.count);
   parent.append(weight);
+}
+
+/** 0, 0.1, 0.2, … 1. Values in between snap to the nearest tenth. */
+function snapInstability(value) {
+  const stepped = Math.round(Number(value) * 10) / 10;
+  if (!Number.isFinite(stepped)) return 0;
+  return Math.min(1, Math.max(0, stepped));
+}
+
+function instabilitySlider(value, onChange) {
+  const wrap = el("label", "instability-filter");
+  wrap.append(el("span", "lbl", "instability"));
+  const input = document.createElement("input");
+  input.type = "range";
+  input.className = "instability-range";
+  input.min = "0";
+  input.max = "1";
+  input.step = "0.1";
+  input.value = value.toFixed(1);
+  input.title = "Hide arrows that climb by less than this. 0 shows every arrow. Each step is 0.1, up to 1.";
+  input.setAttribute("aria-label", "Instability filtered, in steps of 0.1 from 0 to 1");
+  const readout = el("span", "filter-value", instabilityLabel(value));
+  const publish = () => {
+    const next = snapInstability(input.value);
+    input.dataset.dragging = "1";
+    readout.textContent = instabilityLabel(next);
+    onChange(next);
+  };
+  input.addEventListener("input", publish);
+  input.addEventListener("change", () => {
+    delete input.dataset.dragging;
+  });
+  input.addEventListener("blur", () => {
+    delete input.dataset.dragging;
+  });
+  wrap.append(input, readout);
+  return wrap;
+}
+
+function instabilityLabel(value) {
+  if (value <= 0) return "all";
+  return `up to ${value.toFixed(1)}`;
+}
+
+function lineKey(kind, text) {
+  const item = el("span", "legend-item");
+  item.append(el("i", `sw line ${kind}`), document.createTextNode(text));
+  return item;
 }
 
 function instabilityScale() {
@@ -261,6 +376,7 @@ function ring(svg, leaf, kind) {
     y: leaf.y0 + 1.5,
     width: Math.max(0, w - 3),
     height: Math.max(0, h - 3),
+    fill: "none",
   }));
 }
 
