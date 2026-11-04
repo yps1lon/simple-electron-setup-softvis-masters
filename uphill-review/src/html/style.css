@@ -989,19 +989,24 @@ svg.matrix {
   stroke-width: 1;
 }
 
+/* Dark text with a white halo on light cells, white text with a dark halo on dark ones. */
 .offender-map .label text {
-  fill: #1a1a1a;
-  font-size: 11px;
+  fill: #111111;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2.5px;
+  font-size: 12px;
+  font-weight: 600;
   pointer-events: none;
 }
 
 .offender-map .label.on-dark text {
   fill: #ffffff;
+  stroke: rgba(0, 0, 0, 0.55);
 }
 
 .offender-map .label .count {
-  font-size: 10px;
-  fill-opacity: 0.75;
+  font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1067,14 +1072,17 @@ svg.matrix {
 }
 
 .offender-map-controls .step-caption {
-  flex-basis: 100%;
   margin: 0;
   color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
 }
 
 .offender-legend .offence-scale-bar {
   display: inline-block;
-  width: 120px;
+  width: 60px;
   height: 10px;
   margin: 0 6px;
   vertical-align: middle;

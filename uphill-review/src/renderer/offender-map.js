@@ -91,8 +91,8 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
 
   container.append(
     drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes),
-    describeWhatIsShown({ everyRectangle, allArrows, arrowsShown, step, stepIndex, minimumSteepness, selectedRectangle, caseToCompare }),
-    drawLegend(darkestScoreOnLevel, selectedRectangle !== null),
+    describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare }),
+    drawLegend(selectedRectangle !== null),
   );
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, class: "treemap offender-map", role: "img" });
@@ -161,7 +161,7 @@ function toTreemapNode(folder, deepestFolderDepth) {
   }
   if (folder.ownFileCount > 0) {
     children.push({
-      name: "files here",
+      name: "files",
       folderPath: folder.folderPath,
       measuredAtDepth: deepestFolderDepth,
       isOwnFilesCell: true,
@@ -456,13 +456,12 @@ function drawFolderLabel(rectangle, darkestScoreOnLevel, dimmed) {
   group.append(clip);
 
   const text = svgEl("text", { "clip-path": `url(#${clipId})` });
-  const name = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 12 });
+  const name = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 13 });
   name.textContent = rectangle.data.folderPath === "." ? "root" : rectangle.data.name;
   text.append(name);
-  if (!rectangle.children && height >= 28 && rectangle.offence.measured !== null) {
-    const numbers = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 24, class: "count" });
-    numbers.textContent = `I ${rectangle.offence.measured.instability.toFixed(2)}` +
-      (rectangle.offence.score > 0 ? ` · offence ${rectangle.offence.score.toFixed(2)}` : "");
+  if (!rectangle.children && height >= 30 && rectangle.offence.score > 0) {
+    const numbers = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 26, class: "count" });
+    numbers.textContent = rectangle.offence.score > 0 ? rectangle.offence.score.toFixed(2) : "";
     text.append(numbers);
   }
   group.append(text);
@@ -549,7 +548,7 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
   const controls = el("div", "view-head offender-map-controls");
 
   const steepnessControl = el("label", "control");
-  steepnessControl.append(el("span", "lbl", "climbs of at least"));
+  steepnessControl.append(el("span", "lbl", "min climb"));
   const steepnessSlider = el("input");
   Object.assign(steepnessSlider, { type: "range", min: "0", max: "1", step: "0.1", value: String(minimumSteepness) });
   steepnessSlider.setAttribute("aria-label", "Smallest climb in instability that counts and is drawn");
@@ -563,11 +562,11 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
 
   const lastStep = offenderMap.steps.length - 1;
   const stepControl = el("div", "control step-control");
-  const earlier = el("button", "", "◀ earlier");
+  const earlier = el("button", "", "◀");
   earlier.type = "button";
   earlier.disabled = stepIndex === 0;
   earlier.addEventListener("click", () => whenUserDoes.changeStep(stepIndex - 1));
-  const later = el("button", "", "later ▶");
+  const later = el("button", "", "▶");
   later.type = "button";
   later.disabled = stepIndex === lastStep;
   later.addEventListener("click", () => whenUserDoes.changeStep(stepIndex + 1));
@@ -576,7 +575,7 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
   stepSlider.disabled = lastStep === 0;
   stepSlider.setAttribute("aria-label", "Step through the pull request");
   stepSlider.addEventListener("change", () => whenUserDoes.changeStep(Number(stepSlider.value)));
-  stepControl.append(el("span", "lbl", "pull request"), earlier, stepSlider, later);
+  stepControl.append(el("span", "lbl", "PR"), earlier, stepSlider, later);
   controls.append(stepControl);
 
   controls.append(el("p", "step-caption", describeStep(offenderMap, stepIndex)));
@@ -584,141 +583,86 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
 }
 
 function describeSlider(value) {
-  return value > 0 ? value.toFixed(1) : "0 (every arrow)";
+  return value > 0 ? value.toFixed(1) : "all";
 }
 
 function describeStep(offenderMap, stepIndex) {
   const step = offenderMap.steps[stepIndex];
   const commitsShown = offenderMap.steps.length - 1;
-  if (step.commit === null) {
-    return commitsShown === 0
-      ? "This branch has no commits beyond the base, so this is the codebase as it is."
-      : `Before the pull request (step 0 of ${commitsShown}).`;
-  }
-  const who = step.commit.cls === "agent" ? `agent-assisted (${step.commit.tools.join(", ")})` : step.commit.cls;
-  const skipped = offenderMap.someCommitsSkipped ? " Some commits are skipped to keep the stepper short." : "";
-  return `After commit ${stepIndex} of ${commitsShown}: ${step.commit.date} "${step.commit.subject}", ${who}.${skipped}`;
+  if (step.commit === null) return commitsShown === 0 ? "No PR commits" : `Before PR (0/${commitsShown})`;
+  const who = step.commit.cls === "agent" ? "agent" : step.commit.cls;
+  return `${stepIndex}/${commitsShown} · ${step.commit.subject} · ${who}`;
 }
 
-function describeWhatIsShown({ everyRectangle, allArrows, arrowsShown, step, stepIndex, minimumSteepness, selectedRectangle, caseToCompare }) {
-  let text;
+function describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare }) {
+  const parts = [];
   if (selectedRectangle !== null) {
     const importsCount = arrowsShown.filter((arrow) => arrow.direction === "out").length;
-    const dependedOnCount = arrowsShown.length - importsCount;
-    text = `${nameForPeople(selectedRectangle.data)}. Blue arrows: ${plural(importsCount, "folder")} it imports. ` +
-      `Red arrows: ${plural(dependedOnCount, "folder")} that depend on it.` +
-      (minimumSteepness > 0 ? ` Climbs under ${minimumSteepness.toFixed(1)} are hidden.` : "") +
-      " Click the folder again to see every arrow.";
+    parts.push(`${nameForPeople(selectedRectangle.data)}: imports ${importsCount}, imported by ${arrowsShown.length - importsCount}`);
   } else if (caseToCompare !== null) {
-    text = arrowsShown.length > 0
-      ? `${caseToCompare.from} → ${caseToCompare.to}: only this case's arrow is shown. Click a folder to see what else touches it.`
-      : `${caseToCompare.from} → ${caseToCompare.to} is the case in To Decide, but at this step the two sit in the same rectangle or are not linked.`;
+    parts.push(`${caseToCompare.from} → ${caseToCompare.to}` + (arrowsShown.length === 0 ? " (no arrow here)" : ""));
   } else {
-    const offendingFolders = everyRectangle.filter((rectangle) => !rectangle.children && rectangle.offence.score > 0).length;
-    text = `${plural(offendingFolders, "folder")} without subfolders offend. ${arrowsShown.length} of ${allArrows.length} dependencies shown` +
-      (minimumSteepness > 0 ? `; climbs under ${minimumSteepness.toFixed(1)} are hidden.` : ".") +
-      " Click a folder to see what it imports (blue) and what depends on it (red).";
+    parts.push(`${arrowsShown.length}/${allArrows.length} arrows`);
   }
   if (stepIndex > 0) {
     const becameUphill = allArrows.filter((arrow) => arrow.pullRequestStory !== null);
-    const byNewImport = becameUphill.filter((arrow) => arrow.pullRequestStory === "new import").length;
-    text += ` During the pull request so far, ${plural(becameUphill.length, "arrow")} became uphill ` +
-      `(${byNewImport} by a new import, ${becameUphill.length - byNewImport} by drift), and ` +
-      `${plural(step.foldersChangedSinceStart.length, "folder")} changed (${step.foldersChangedInThisStep.length} in this commit).`;
+    const byDrift = becameUphill.filter((arrow) => arrow.pullRequestStory === "drift").length;
+    parts.push(`+${becameUphill.length} uphill in PR` + (byDrift > 0 ? ` (${byDrift} drift)` : ""));
   }
-  return el("p", "view-summary", text);
+  return el("p", "view-summary", parts.join(" · "));
 }
 
-function drawLegend(darkestScoreOnLevel, aFolderIsSelected) {
+function drawLegend(aFolderIsSelected) {
   const legend = el("div", "legend offender-legend");
   const scale = el("span", "legend-item");
-  scale.append(el("span", "", "no uphill links"), el("i", "offence-scale-bar"), el("span", "", "worst folder on its nesting level"));
+  scale.title = "White: no uphill links. Darkest red: the worst folder on its nesting level.";
+  scale.append(el("span", "", "ok"), el("i", "offence-scale-bar"), el("span", "", "worst"));
   legend.append(scale);
-
-  const arrowKey = el("span", "legend-item");
-  arrowKey.append(el("i", "sw line out"), document.createTextNode(aFolderIsSelected ? "it imports" : "imports"));
-  if (aFolderIsSelected) arrowKey.append(el("i", "sw line in"), document.createTextNode("they import it"));
-  arrowKey.append(el("i", "sw line became-uphill"), document.createTextNode("became uphill in the pull request (dashed: drift)"));
-  legend.append(arrowKey);
-
-  const outlineKey = el("span", "legend-item");
-  outlineKey.append(el("i", "sw outline-key changed-in-this-step"), document.createTextNode("changed in this commit"),
-    el("i", "sw outline-key changed-earlier-in-pull-request"), document.createTextNode("changed earlier in the pull request"));
-  legend.append(outlineKey);
-
-  const levels = [...darkestScoreOnLevel.entries()].sort((a, b) => a[0] - b[0]);
-  const darkestList = el("p", "darkest-per-level");
-  darkestList.textContent = "Darkest red per nesting level: " + levels
-    .map(([nestingLevel, darkest]) => darkest.score > 0
-      ? `level ${nestingLevel} = ${darkest.score.toFixed(2)} (${nameForPeople(darkest.folder)})`
-      : `level ${nestingLevel} = none`)
-    .join(" · ");
-  legend.append(darkestList);
+  const key = (className, text) => {
+    const item = el("span", "legend-item");
+    item.append(el("i", className), document.createTextNode(text));
+    legend.append(item);
+  };
+  key("sw line out", "imports");
+  if (aFolderIsSelected) key("sw line in", "imported by");
+  key("sw line became-uphill", "new uphill");
+  key("sw outline-key changed-in-this-step", "changed");
   return legend;
 }
 
 function describeSelectedFolder(rectangle, minimumSteepness) {
   const box = el("div", "selected-folder");
   const offence = rectangle.offence;
-  const folder = rectangle.data;
-  box.append(el("h3", "", nameForPeople(folder)));
-  if (folder.measuredAtDepth === null) {
-    box.append(el("p", "", "The whole codebase. Pick a folder to see its links."));
-    return box;
-  }
+  box.append(el("h3", "", nameForPeople(rectangle.data)));
   if (!offence.existsAtThisStep) {
-    box.append(el("p", "", "This folder has no files at this step."));
+    box.append(el("p", "", "No files at this step"));
     return box;
   }
-  const measured = offence.measured;
-  box.append(el("p", "",
-    `Measured with folders merged to ${plural(folder.measuredAtDepth, "path segment")}. ` +
-    `Instability ${measured.instability.toFixed(2)}: imported by ${plural(measured.importedByFiles, "file")} outside, ` +
-    `and ${plural(measured.importsFilesOutside, "file")} inside import something outside. ` +
-    `Offence ${offence.score.toFixed(2)}.`));
-  if (offence.allUphillLinks.length === 0) {
-    box.append(el("p", "", "It imports nothing less stable than itself."));
-    return box;
-  }
-  box.append(el("p", "", "Its uphill links:"));
+  box.append(el("p", "", `I ${offence.measured.instability.toFixed(2)} · score ${offence.score.toFixed(2)}`));
   const list = el("ul", "uphill-links");
-  for (const link of offence.allUphillLinks) {
+  const MOST_LINKS_LISTED = 3;
+  for (const link of offence.allUphillLinks.slice(0, MOST_LINKS_LISTED)) {
     const counted = isAtLeastAsSteepAs(link, minimumSteepness);
-    const history = link.steepnessBeforePullRequest === null
-      ? "the folders were not linked before the pull request"
-      : `steepness before the pull request ${link.steepnessBeforePullRequest.toFixed(2)}`;
-    list.append(el("li", counted ? "counted" : "below-slider",
-      `→ ${link.toFolder}: steepness ${link.steepness.toFixed(2)}, ${plural(link.importCount, "file import")}` +
-      (link.importsAddedByPullRequest > 0 ? ` (${link.importsAddedByPullRequest} added by the pull request)` : "") +
-      `, ${history}${counted ? "" : ", below the slider so not counted"}`));
+    const added = link.steepnessBeforePullRequest === null ? " · new" : link.importsAddedByPullRequest > 0 ? ` · +${link.importsAddedByPullRequest}` : "";
+    list.append(el("li", counted ? "counted" : "below-slider", `→ ${link.toFolder}  ${link.steepness.toFixed(2)} · ${link.importCount}${added}`));
   }
-  box.append(list);
+  const notListed = offence.allUphillLinks.length - MOST_LINKS_LISTED;
+  if (notListed > 0) list.append(el("li", "below-slider", `+${notListed} more`));
+  if (offence.allUphillLinks.length > 0) box.append(list);
   return box;
 }
 
 function describeArrowForTooltip({ link, pullRequestStory }) {
-  const lines = [
-    `${link.fromFolder} → ${link.toFolder}`,
-    `${plural(link.importCount, "file import")}` + (link.importsAddedByPullRequest > 0 ? `, ${link.importsAddedByPullRequest} added by the pull request` : ""),
-    isUphill(link) ? `climbs ${link.steepness.toFixed(2)} in instability (uphill)` : `goes down ${Math.abs(link.steepness).toFixed(2)} in instability`,
-  ];
-  if (pullRequestStory === "new import") lines.push("became uphill in this pull request through a new import");
-  if (pullRequestStory === "drift") lines.push("became uphill in this pull request through drift: the import was already there");
-  lines.push("click to select this link in the other views");
-  return lines.join("\n");
+  const climb = isUphill(link) ? `climbs ${link.steepness.toFixed(2)}` : `down ${Math.abs(link.steepness).toFixed(2)}`;
+  const story = pullRequestStory === null ? "" : ` · uphill in PR (${pullRequestStory})`;
+  return `${link.fromFolder} → ${link.toFolder}\n${plural(link.importCount, "import")} · ${climb}${story}`;
 }
 
 function describeFolderForTooltip(rectangle) {
   const folder = rectangle.data;
-  if (folder.measuredAtDepth === null) return "The whole codebase";
-  const offence = rectangle.offence;
-  if (!offence.existsAtThisStep) return `${nameForPeople(folder)}\nno files at this step`;
-  return [
-    nameForPeople(folder),
-    `offence ${offence.score.toFixed(2)} from ${plural(offence.countedLinks.length, "uphill link")}`,
-    `instability ${offence.measured.instability.toFixed(2)}, ${plural(offence.measured.filesInside, "file")}`,
-    "click to see what it imports and what depends on it",
-  ].join("\n");
+  if (folder.measuredAtDepth === null) return "codebase";
+  if (!rectangle.offence.existsAtThisStep) return `${nameForPeople(folder)}\nno files at this step`;
+  return `${nameForPeople(folder)}\nI ${rectangle.offence.measured.instability.toFixed(2)} · score ${rectangle.offence.score.toFixed(2)}`;
 }
 
 function describeFolderInOneLine(rectangle) {
@@ -737,7 +681,7 @@ function keyOfFolder(folder) {
 
 function nameForPeople(folder) {
   const path = folder.folderPath === "." ? "repository root" : folder.folderPath || "the whole codebase";
-  return folder.isOwnFilesCell ? `${path} (its own files)` : path;
+  return folder.isOwnFilesCell ? `${path} (files)` : path;
 }
 
 /** "src/core/money" merged to 2 path segments is "src/core". The repository root "." stays ".". */
