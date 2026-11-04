@@ -1090,6 +1090,37 @@ svg.matrix {
   background: linear-gradient(to right, #ffffff, rgb(178, 24, 43));
 }
 
+.offender-legend .offence-scale-bar.indirect {
+  background: linear-gradient(to right, #ffffff, rgb(106, 61, 154));
+}
+
+.offender-legend .offence-scale-bar.coupling {
+  background: linear-gradient(to right, #ffffff, rgb(21, 128, 120));
+}
+
+.offender-legend .sw.side {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  margin: 0 4px 0 8px;
+  vertical-align: middle;
+  border: 1px solid var(--line);
+}
+
+.offender-legend .sw.side.stable {
+  background: #d6e2f0;
+}
+
+.offender-legend .sw.side.unstable {
+  background: #f2a65a;
+}
+
+.offender-map-controls .control button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .offender-legend .outline-key {
   display: inline-block;
   width: 22px;

@@ -29,7 +29,7 @@ const state = {
   treemapFocus: null,
   // The offender map: how steep a link must be to count as uphill, which
   // step of the pull request is shown, and which folder is picked.
-  offenderMap: { minimumSteepness: 0.2, stepIndex: 0, selectedFolderKey: null },
+  offenderMap: { minimumSteepness: 0.2, stepIndex: 0, deepestDepthShown: null, colourMode: "score", splitAt: null, selectedFolderKey: null },
   // True only after a To Decide case is chosen in the list. A folder click clears it.
   treemapCase: false,
   // 0 shows every dependency arrow. Each tenth above that hides climbs below it, up to 1.
@@ -78,6 +78,10 @@ async function onReview() {
     state.offenderMap = {
       minimumSteepness: review.minGap,
       stepIndex: review.offenderMap.steps.length - 1,
+      deepestDepthShown: null,
+      colourMode: "score",
+      // null means the automatic split.
+      splitAt: null,
       selectedFolderKey: null,
     };
     state.treemapSteepness = 0;
@@ -153,6 +157,19 @@ function drawView() {
       },
       changeStep: (index) => {
         state.offenderMap = { ...state.offenderMap, stepIndex: index };
+        drawView();
+      },
+      changeColourMode: (mode) => {
+        state.offenderMap = { ...state.offenderMap, colourMode: mode };
+        drawView();
+      },
+      changeSplitAt: (value) => {
+        state.offenderMap = { ...state.offenderMap, splitAt: value };
+        drawView();
+      },
+      changeDepth: (depth) => {
+        // A folder picked at one depth may not exist at another, so the pick is cleared.
+        state.offenderMap = { ...state.offenderMap, deepestDepthShown: depth, selectedFolderKey: null };
         drawView();
       },
       selectFolder: (key) => {

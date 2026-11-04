@@ -1,5 +1,5 @@
 import { hierarchy, treemap } from "d3-hierarchy";
-import { el, hover, plural, svgEl } from "./ui.js";
+import { el, hover, plural, segmented, svgEl } from "./ui.js";
 
 /**
  * The cascade: the whole codebase as a cascaded treemap, with every folder
@@ -32,6 +32,16 @@ import { el, hover, plural, svgEl } from "./ui.js";
  *   see every arrow.
  * - Choosing a case in the To Decide list shows only that case's arrow.
  *
+ * The "colour by" switch changes what the fill means (Marius's notes):
+ * - score: the offence score above (the default).
+ * - split: every folder goes to the stable side or the unstable side of one
+ *   instability cut, found automatically (Otsu's method), so the tool, not
+ *   a person, decides which group should depend on which. Arrows show only
+ *   the stable side importing the unstable side.
+ * - indirect: the highest instability a folder reaches through any chain of
+ *   imports, minus its own. Click a folder to see the chain.
+ * - coupling: how many file imports go between each folder and the picked one.
+ *
  * The pull request part: the stepper moves from the codebase before the pull
  * request through each of its commits. The layout never moves; only colours,
  * outlines and arrows change. Outlines mark folders the pull request changed.
@@ -52,8 +62,10 @@ const ROUNDING_NOISE = 1e-9;
 /**
  * @param container       the element to draw into
  * @param review          the ReviewResult from the engine
- * @param viewSettings    { minimumSteepness, stepIndex, selectedFolderKey, caseToCompare: {from, to} | null }
- * @param whenUserDoes    { changeMinimumSteepness(value), changeStep(index), selectFolder(key), selectLink({from, to, depth}) }
+ * @param viewSettings    { minimumSteepness, stepIndex, deepestDepthShown (null: all), colourMode, splitAt (null: automatic),
+ *                          selectedFolderKey, caseToCompare: {from, to} | null }
+ * @param whenUserDoes    { changeMinimumSteepness(value), changeStep(index), changeDepth(depth), changeColourMode(mode),
+ *                          changeSplitAt(value or null), selectFolder(key), selectLink({from, to, depth}) }
  */
 export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
   container.replaceChildren();
@@ -66,10 +78,12 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
   const stepIndex = Math.min(viewSettings.stepIndex, offenderMap.steps.length - 1);
   const step = offenderMap.steps[stepIndex];
   const minimumSteepness = viewSettings.minimumSteepness;
+  // Folders deeper than this are folded into their ancestor at this depth, like the flat treemap's depth buttons.
+  const deepestDepthShown = Math.min(viewSettings.deepestDepthShown ?? offenderMap.deepestFolderDepth, offenderMap.deepestFolderDepth);
 
   const width = Math.max(280, Math.floor(container.clientWidth || 640));
   const height = Math.max(420, Math.min(720, Math.round(width * 0.8)));
-  const folderTree = buildFolderTree(offenderMap.layoutFolders, offenderMap.deepestFolderDepth);
+  const folderTree = buildFolderTree(offenderMap.layoutFolders, deepestDepthShown);
   const laidOutRoot = layOutCascadedTreemap(folderTree, width, height);
   const everyRectangle = laidOutRoot.descendants().filter((node) => node.x1 - node.x0 >= 1 && node.y1 - node.y0 >= 1);
 
@@ -77,6 +91,8 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
     rectangle.offence = offenceOfFolder(rectangle.data, step, minimumSteepness);
   }
   const darkestScoreOnLevel = darkestScoreForEachNestingLevel(everyRectangle);
+  const colourMode = viewSettings.colourMode ?? "score";
+  const rectangleFor = rectangleFinder(everyRectangle, deepestDepthShown);
   const changedFolders = {
     inThisStep: new Set(step.foldersChangedInThisStep),
     sinceStart: new Set(step.foldersChangedSinceStart),
@@ -85,14 +101,27 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
   // Clicking the whole-codebase background selects nothing: every arrow is inside it.
   const selectedRectangle = everyRectangle.find((rectangle) => rectangle.depth > 0 && keyOfFolder(rectangle.data) === viewSettings.selectedFolderKey) ?? null;
   const caseToCompare = selectedRectangle === null ? (viewSettings.caseToCompare ?? null) : null;
-  const allArrows = everyDependencyArrow(everyRectangle, step, offenderMap.deepestFolderDepth, minimumSteepness);
-  const arrowsShown = chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, caseToCompare });
+  const allArrows = everyDependencyArrow(everyRectangle, step, rectangleFor, minimumSteepness);
+
+  const automaticSplitAt = automaticSplit(everyRectangle);
+  const splitAt = viewSettings.splitAt ?? automaticSplitAt;
+  const colouring = colourEveryFolder(everyRectangle, colourMode, { darkestScoreOnLevel, splitAt, step, selectedRectangle, rectangleFor });
+
+  let arrowsShown;
+  if (colourMode === "indirect" && selectedRectangle !== null) {
+    arrowsShown = arrowsAlongChain(selectedRectangle, step, rectangleFor);
+  } else {
+    const onlyStableImportingUnstable = colourMode === "split" ? splitAt : null;
+    // Coupling counts every import, so its arrows ignore the climb slider too.
+    const smallestClimbDrawn = colourMode === "coupling" && selectedRectangle !== null ? 0 : minimumSteepness;
+    arrowsShown = chooseArrowsToShow(allArrows, { minimumSteepness: smallestClimbDrawn, selectedRectangle, caseToCompare, onlyStableImportingUnstable });
+  }
   const foldersNearTheChoice = foldersTouchedBy(arrowsShown, selectedRectangle, caseToCompare);
 
   container.append(
-    drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes),
-    describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare }),
-    drawLegend(selectedRectangle !== null),
+    drawControls(offenderMap, { stepIndex, minimumSteepness, deepestDepthShown, colourMode, splitAt, automaticSplitAt }, whenUserDoes),
+    describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare, colourMode, colouring, splitAt }),
+    drawLegend(selectedRectangle !== null, colourMode),
   );
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, class: "treemap offender-map", role: "img" });
@@ -105,11 +134,11 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
   const outerFirst = [...everyRectangle].sort((a, b) => a.depth - b.depth);
   for (const rectangle of outerFirst) {
     const dimmed = foldersNearTheChoice !== null && !foldersNearTheChoice.has(rectangle);
-    svg.append(drawFolderRectangle(rectangle, { darkestScoreOnLevel, changedFolders, selectedRectangle, dimmed, whenUserDoes }));
+    svg.append(drawFolderRectangle(rectangle, { changedFolders, selectedRectangle, dimmed, whenUserDoes }));
   }
   for (const rectangle of outerFirst) {
     const dimmed = foldersNearTheChoice !== null && !foldersNearTheChoice.has(rectangle);
-    const label = drawFolderLabel(rectangle, darkestScoreOnLevel, dimmed);
+    const label = drawFolderLabel(rectangle, dimmed);
     if (label !== null) svg.append(label);
   }
 
@@ -121,40 +150,43 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
     drawDependencyArrow(arrowLayer, arrow, mostImportsOnOneArrow, whenUserDoes);
   }
 
-  if (selectedRectangle !== null) container.append(describeSelectedFolder(selectedRectangle, minimumSteepness));
+  if (selectedRectangle !== null) container.append(describeSelectedFolder(selectedRectangle, minimumSteepness, colourMode, splitAt));
 }
 
 // ---------------------------------------------------------------------------
 // The folder tree and its layout
 
 /**
- * Turn the flat list of folders into a tree. A folder that holds files and
- * also has subfolders gets an extra child, "files here", for its own files.
- * Every node remembers at which level it is measured: its own depth, except
- * for "files here", which is measured with nothing merged, so it is just
- * the files directly in that folder.
+ * Turn the flat list of folders into a tree, folding every folder deeper
+ * than `deepestDepthShown` into its ancestor at that depth. A folder that
+ * holds files and also has subfolders gets an extra child, "files", for its
+ * own files. Every node remembers at which level it is measured: its own
+ * depth, except for "files", which is measured at the deepest level shown.
+ * At that level its subfolders are separate folders, so "files" is just the
+ * files directly in it.
  */
-function buildFolderTree(layoutFolders, deepestFolderDepth) {
+function buildFolderTree(layoutFolders, deepestDepthShown) {
   const root = { name: "codebase", folderPath: "", subfolders: new Map(), ownFileCount: 0 };
   for (const folder of layoutFolders) {
-    const pathSegments = folder.folderPath === "." ? ["."] : folder.folderPath.split("/");
+    const foldedPath = mergeToDepth(folder.folderPath, deepestDepthShown);
+    const pathSegments = foldedPath === "." ? ["."] : foldedPath.split("/");
     let current = root;
     pathSegments.forEach((segment, index) => {
       if (!current.subfolders.has(segment)) {
-        const folderPath = folder.folderPath === "." ? "." : pathSegments.slice(0, index + 1).join("/");
+        const folderPath = foldedPath === "." ? "." : pathSegments.slice(0, index + 1).join("/");
         current.subfolders.set(segment, { name: segment, folderPath, subfolders: new Map(), ownFileCount: 0 });
       }
       current = current.subfolders.get(segment);
     });
-    current.ownFileCount = folder.fileCountForLayout;
+    current.ownFileCount += folder.fileCountForLayout;
   }
-  return toTreemapNode(root, deepestFolderDepth);
+  return toTreemapNode(root, deepestDepthShown);
 }
 
-function toTreemapNode(folder, deepestFolderDepth) {
+function toTreemapNode(folder, deepestDepthShown) {
   const isWholeCodebase = folder.folderPath === "";
   const measuredAtDepth = isWholeCodebase ? null : depthOfPath(folder.folderPath);
-  const children = [...folder.subfolders.values()].map((subfolder) => toTreemapNode(subfolder, deepestFolderDepth));
+  const children = [...folder.subfolders.values()].map((subfolder) => toTreemapNode(subfolder, deepestDepthShown));
 
   if (children.length === 0) {
     return { name: folder.name, folderPath: folder.folderPath, measuredAtDepth, isOwnFilesCell: false, fileCount: folder.ownFileCount };
@@ -163,7 +195,7 @@ function toTreemapNode(folder, deepestFolderDepth) {
     children.push({
       name: "files",
       folderPath: folder.folderPath,
-      measuredAtDepth: deepestFolderDepth,
+      measuredAtDepth: deepestDepthShown,
       isOwnFilesCell: true,
       fileCount: folder.ownFileCount,
     });
@@ -275,6 +307,171 @@ function isAtLeastAsSteepAs(link, minimumSteepness) {
 }
 
 // ---------------------------------------------------------------------------
+// Colour modes
+
+const STABLE_SIDE = "#d6e2f0";
+const UNSTABLE_SIDE = "#f2a65a";
+const MOST_INDIRECT = [106, 61, 154];
+const MOST_COUPLED = [21, 128, 120];
+
+/**
+ * Sets `fill` and `fillDarkness` (0 light to 1 dark, for the label colour) on
+ * every rectangle for the chosen mode, and returns numbers for the summary.
+ */
+function colourEveryFolder(everyRectangle, colourMode, { darkestScoreOnLevel, splitAt, step, selectedRectangle, rectangleFor }) {
+  const coupling = colourMode === "coupling" && selectedRectangle !== null
+    ? couplingWithFolder(selectedRectangle, step, rectangleFor)
+    : new Map();
+  const mostCoupled = Math.max(1, ...coupling.values());
+  const summary = { stableSide: 0, unstableSide: 0, reachIndirectly: 0, coupledFolders: coupling.size };
+
+  for (const rectangle of everyRectangle) {
+    rectangle.fillDarkness = 0;
+    if (rectangle.depth === 0) {
+      rectangle.fill = BACKGROUND_OF_WHOLE_CODEBASE;
+      continue;
+    }
+    if (!rectangle.offence.existsAtThisStep) {
+      rectangle.fill = "url(#not-here-yet)";
+      continue;
+    }
+    const instability = rectangle.offence.measured.instability;
+
+    if (colourMode === "split") {
+      const onStableSide = instability < splitAt;
+      rectangle.fill = onStableSide ? STABLE_SIDE : UNSTABLE_SIDE;
+      if (!rectangle.children) summary[onStableSide ? "stableSide" : "unstableSide"] += 1;
+    } else if (colourMode === "indirect") {
+      rectangle.indirect = furthestClimbFrom(rectangle.data.folderPath, step.levels[rectangle.data.measuredAtDepth - 1]);
+      rectangle.fillDarkness = Math.min(1, rectangle.indirect.climb);
+      rectangle.fill = mixFromWhite(MOST_INDIRECT, rectangle.fillDarkness);
+      if (!rectangle.children && rectangle.indirect.onlyIndirectly) summary.reachIndirectly += 1;
+    } else if (colourMode === "coupling") {
+      rectangle.fillDarkness = (coupling.get(rectangle) ?? 0) / mostCoupled;
+      rectangle.fill = mixFromWhite(MOST_COUPLED, rectangle.fillDarkness);
+    } else {
+      const darkest = darkestScoreOnLevel.get(rectangle.depth)?.score ?? 0;
+      rectangle.fillDarkness = shareOfWorstOnLevel(rectangle, darkestScoreOnLevel);
+      rectangle.fill = colourForScore(rectangle.offence.score, darkest);
+    }
+  }
+  return summary;
+}
+
+/**
+ * Otsu's method on instability: try every cut between two neighbouring
+ * values and keep the one that makes the two groups most different (the
+ * largest variance between the groups), each folder weighted by its files.
+ * Only rectangles without subfolders take part, so no file counts twice.
+ */
+function automaticSplit(everyRectangle) {
+  const folders = everyRectangle
+    .filter((rectangle) => !rectangle.children && rectangle.depth > 0 && rectangle.offence.existsAtThisStep)
+    .map((rectangle) => ({ instability: rectangle.offence.measured.instability, files: Math.max(1, rectangle.offence.measured.filesInside) }))
+    .sort((a, b) => a.instability - b.instability);
+  const totalFiles = folders.reduce((sum, folder) => sum + folder.files, 0);
+  const totalWeighted = folders.reduce((sum, folder) => sum + folder.files * folder.instability, 0);
+
+  let bestCut = 0.5;
+  let bestDifference = -1;
+  let filesBelow = 0;
+  let weightedBelow = 0;
+  for (let index = 0; index < folders.length - 1; index++) {
+    filesBelow += folders[index].files;
+    weightedBelow += folders[index].files * folders[index].instability;
+    if (folders[index + 1].instability - folders[index].instability < ROUNDING_NOISE) continue;
+    const filesAbove = totalFiles - filesBelow;
+    const averageBelow = weightedBelow / filesBelow;
+    const averageAbove = (totalWeighted - weightedBelow) / filesAbove;
+    const differenceBetweenGroups = filesBelow * filesAbove * (averageBelow - averageAbove) ** 2;
+    if (differenceBetweenGroups > bestDifference) {
+      bestDifference = differenceBetweenGroups;
+      bestCut = (folders[index].instability + folders[index + 1].instability) / 2;
+    }
+  }
+  return Math.round(bestCut * 100) / 100;
+}
+
+/**
+ * Follows every chain of imports from one folder (within one level) and
+ * finds the least stable folder it reaches; ties go to the shorter chain.
+ * `climb` is that folder's instability minus the start's (0 when nothing
+ * reached is less stable). `onlyIndirectly` is true when no direct import
+ * climbs that high, so the risk only shows through other folders.
+ */
+function furthestClimbFrom(startFolder, level) {
+  const startInstability = level.folders[startFolder]?.instability ?? 0;
+  const importsOf = new Map();
+  for (const link of level.links) {
+    if (!importsOf.has(link.fromFolder)) importsOf.set(link.fromFolder, []);
+    importsOf.get(link.fromFolder).push(link.toFolder);
+  }
+
+  const cameFrom = new Map([[startFolder, null]]);
+  const stepsAway = new Map([[startFolder, 0]]);
+  const queue = [startFolder];
+  let best = null;
+  while (queue.length > 0) {
+    const folder = queue.shift();
+    for (const next of importsOf.get(folder) ?? []) {
+      if (cameFrom.has(next)) continue;
+      cameFrom.set(next, folder);
+      stepsAway.set(next, stepsAway.get(folder) + 1);
+      queue.push(next);
+      const instability = level.folders[next]?.instability ?? 0;
+      if (best === null || instability > best.instability + ROUNDING_NOISE) best = { folder: next, instability };
+    }
+  }
+
+  const highestDirect = Math.max(startInstability, ...(importsOf.get(startFolder) ?? []).map((next) => level.folders[next]?.instability ?? 0));
+  if (best === null || best.instability <= startInstability + ROUNDING_NOISE) {
+    return { climb: 0, chain: [startFolder], onlyIndirectly: false };
+  }
+  const chain = [];
+  for (let folder = best.folder; folder !== null; folder = cameFrom.get(folder)) chain.unshift(folder);
+  return {
+    climb: best.instability - startInstability,
+    reachedInstability: best.instability,
+    chain,
+    onlyIndirectly: best.instability > highestDirect + ROUNDING_NOISE,
+  };
+}
+
+/** The chain from the picked folder to the least stable folder it reaches, one arrow per import. */
+function arrowsAlongChain(selectedRectangle, step, rectangleFor) {
+  const level = step.levels[selectedRectangle.data.measuredAtDepth - 1];
+  const chain = selectedRectangle.indirect?.chain ?? [];
+  const arrows = [];
+  for (let index = 0; index < chain.length - 1; index++) {
+    const link = level.links.find((candidate) => candidate.fromFolder === chain[index] && candidate.toFolder === chain[index + 1]);
+    const source = index === 0 ? selectedRectangle : rectangleFor(chain[index], level.mergedToDepth);
+    const target = rectangleFor(chain[index + 1], level.mergedToDepth);
+    if (link === undefined || source === undefined || target === undefined || source === target) continue;
+    arrows.push({ link, source, target, direction: "out", pullRequestStory: null });
+  }
+  return arrows;
+}
+
+/** Rectangle -> file imports between it and the picked folder, both ways, at the picked folder's level. */
+function couplingWithFolder(selectedRectangle, step, rectangleFor) {
+  const level = step.levels[selectedRectangle.data.measuredAtDepth - 1];
+  const picked = selectedRectangle.data.folderPath;
+  const importsBetween = new Map();
+  for (const link of level.links) {
+    const otherFolder = link.fromFolder === picked ? link.toFolder : link.toFolder === picked ? link.fromFolder : null;
+    if (otherFolder === null) continue;
+    const other = rectangleFor(otherFolder, level.mergedToDepth);
+    if (other === undefined || other === selectedRectangle) continue;
+    importsBetween.set(other, (importsBetween.get(other) ?? 0) + link.importCount);
+  }
+  return importsBetween;
+}
+
+function mixFromWhite(colour, share) {
+  return rgb(WHITE.map((channel, index) => Math.round(channel + (colour[index] - channel) * Math.min(1, Math.max(0, share)))));
+}
+
+// ---------------------------------------------------------------------------
 // Arrows
 
 /**
@@ -282,8 +479,7 @@ function isAtLeastAsSteepAs(link, minimumSteepness) {
  * without subfolders it starts in, at that rectangle's own level, so the
  * other end is the folder it imports as seen at that level.
  */
-function everyDependencyArrow(everyRectangle, step, deepestFolderDepth, minimumSteepness) {
-  const rectangleFor = rectangleFinder(everyRectangle, deepestFolderDepth);
+function everyDependencyArrow(everyRectangle, step, rectangleFor, minimumSteepness) {
   const arrows = [];
   for (const source of everyRectangle) {
     if (source.children || source.data.measuredAtDepth === null) continue;
@@ -292,7 +488,14 @@ function everyDependencyArrow(everyRectangle, step, deepestFolderDepth, minimumS
       if (link.fromFolder !== source.data.folderPath) continue;
       const target = rectangleFor(link.toFolder, source.data.measuredAtDepth);
       if (target === undefined || target === source) continue;
-      arrows.push({ link, source, target, pullRequestStory: whatThePullRequestDidToLink(link, minimumSteepness) });
+      arrows.push({
+        link,
+        source,
+        target,
+        importerInstability: level.folders[link.fromFolder]?.instability ?? 0,
+        importedInstability: level.folders[link.toFolder]?.instability ?? 0,
+        pullRequestStory: whatThePullRequestDidToLink(link, minimumSteepness),
+      });
     }
   }
   return arrows;
@@ -316,7 +519,7 @@ function whatThePullRequestDidToLink(link, minimumSteepness) {
  * its arrow; otherwise the slider hides climbs below its value, and a picked
  * folder keeps only the arrows that touch it.
  */
-function chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, caseToCompare }) {
+function chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, caseToCompare, onlyStableImportingUnstable }) {
   if (caseToCompare !== null) {
     return allArrows
       .filter((arrow) => arrowMatchesCase(arrow, caseToCompare))
@@ -324,7 +527,11 @@ function chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, ca
   }
   const shown = [];
   for (const arrow of allArrows) {
-    if (minimumSteepness > 0 && !isAtLeastAsSteepAs(arrow.link, minimumSteepness)) continue;
+    if (onlyStableImportingUnstable !== null) {
+      // Split mode: only the stable side importing the unstable side, whatever the slider says.
+      const crossesTheSplit = arrow.importerInstability < onlyStableImportingUnstable && arrow.importedInstability >= onlyStableImportingUnstable;
+      if (!crossesTheSplit) continue;
+    } else if (minimumSteepness > 0 && !isAtLeastAsSteepAs(arrow.link, minimumSteepness)) continue;
     if (selectedRectangle === null) {
       shown.push({ ...arrow, direction: "out" });
       continue;
@@ -365,11 +572,11 @@ function foldersTouchedBy(arrowsShown, selectedRectangle, caseToCompare) {
 }
 
 /**
- * Finds the rectangle a link points to. At the deepest level a folder that
- * also has subfolders means only its own files, so the "files here" cell;
+ * Finds the rectangle a link points to. At the deepest level shown a folder
+ * that also has subfolders means only its own files, so the "files" cell;
  * at any other level it means the folder with everything inside it.
  */
-function rectangleFinder(everyRectangle, deepestFolderDepth) {
+function rectangleFinder(everyRectangle, deepestDepthShown) {
   const folderRectangle = new Map();
   const ownFilesRectangle = new Map();
   for (const rectangle of everyRectangle) {
@@ -378,7 +585,7 @@ function rectangleFinder(everyRectangle, deepestFolderDepth) {
     else folderRectangle.set(rectangle.data.folderPath, rectangle);
   }
   return (folderPath, levelOfTheLink) => {
-    if (levelOfTheLink === deepestFolderDepth && ownFilesRectangle.has(folderPath)) return ownFilesRectangle.get(folderPath);
+    if (levelOfTheLink === deepestDepthShown && ownFilesRectangle.has(folderPath)) return ownFilesRectangle.get(folderPath);
     return folderRectangle.get(folderPath);
   };
 }
@@ -393,14 +600,11 @@ function isInside(rectangle, possibleAncestor) {
 // ---------------------------------------------------------------------------
 // Drawing
 
-function drawFolderRectangle(rectangle, { darkestScoreOnLevel, changedFolders, selectedRectangle, dimmed, whenUserDoes }) {
+function drawFolderRectangle(rectangle, { changedFolders, selectedRectangle, dimmed, whenUserDoes }) {
   const folder = rectangle.data;
   const group = svgEl("g", rectangle.children ? { filter: "url(#cascade-shadow)" } : {});
   const isWholeCodebase = rectangle.depth === 0;
-  const darkest = darkestScoreOnLevel.get(rectangle.depth)?.score ?? 0;
-
-  let fill = BACKGROUND_OF_WHOLE_CODEBASE;
-  if (!isWholeCodebase) fill = rectangle.offence.existsAtThisStep ? colourForScore(rectangle.offence.score, darkest) : "url(#not-here-yet)";
+  const fill = rectangle.fill;
 
   const shape = svgEl("rect", {
     class: `${rectangle.children ? "frame" : "cell"}${dimmed ? " dim" : ""}`,
@@ -443,12 +647,12 @@ function drawFolderRectangle(rectangle, { darkestScoreOnLevel, changedFolders, s
   return group;
 }
 
-function drawFolderLabel(rectangle, darkestScoreOnLevel, dimmed) {
+function drawFolderLabel(rectangle, dimmed) {
   const width = rectangle.x1 - rectangle.x0;
   const height = rectangle.y1 - rectangle.y0;
   if (width < 28 || height < 12) return null;
 
-  const isDarkFill = rectangle.depth === 0 || shareOfWorstOnLevel(rectangle, darkestScoreOnLevel) > 0.55;
+  const isDarkFill = rectangle.depth === 0 || rectangle.fillDarkness > 0.55;
   const group = svgEl("g", { class: `label${isDarkFill ? " on-dark" : ""}${dimmed ? " dim" : ""}` });
   const clipId = `offender-map-clip-${rectangle.x0}-${rectangle.y0}-${rectangle.depth}`;
   const clip = svgEl("clipPath", { id: clipId });
@@ -544,10 +748,50 @@ function arrowHead(id, colour) {
 // ---------------------------------------------------------------------------
 // Controls, legend and text
 
-function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
+function drawControls(offenderMap, { stepIndex, minimumSteepness, deepestDepthShown, colourMode, splitAt, automaticSplitAt }, whenUserDoes) {
   const controls = el("div", "view-head offender-map-controls");
 
+  const deepest = offenderMap.deepestFolderDepth;
+  const depthChoices = [];
+  for (let depth = 1; depth <= deepest; depth++) {
+    depthChoices.push({
+      value: depth,
+      label: depth === deepest ? "all" : `depth ${depth}`,
+      title: depth === deepest ? "Every folder on its own" : `Folders merged to their first ${plural(depth, "path segment")}`,
+    });
+  }
+  controls.append(segmented(depthChoices, deepestDepthShown, (depth) => whenUserDoes.changeDepth(depth), "Folder depth"));
+
+  const colourChoice = el("div", "control");
+  colourChoice.append(el("span", "lbl", "colour"), segmented([
+    { value: "score", label: "score", title: "Red: how much a folder imports less stable folders" },
+    { value: "split", label: "split", title: "Stable side and unstable side, split automatically. Arrows: the stable side importing the unstable side" },
+    { value: "indirect", label: "indirect", title: "Purple: the least stable folder it reaches through any chain of imports, minus its own instability" },
+    { value: "coupling", label: "coupling", title: "Green: file imports to and from the folder you pick" },
+  ], colourMode, (mode) => whenUserDoes.changeColourMode(mode), "Colour by"));
+  controls.append(colourChoice);
+
+  if (colourMode === "split") {
+    const splitControl = el("label", "control");
+    splitControl.append(el("span", "lbl", "split at I"));
+    const splitSlider = el("input");
+    Object.assign(splitSlider, { type: "range", min: "0.05", max: "0.95", step: "0.05", value: String(splitAt) });
+    splitSlider.setAttribute("aria-label", "Instability that separates the stable side from the unstable side");
+    const splitReadout = el("span", "readout", splitAt.toFixed(2));
+    splitSlider.addEventListener("input", () => {
+      splitReadout.textContent = Number(splitSlider.value).toFixed(2);
+    });
+    splitSlider.addEventListener("change", () => whenUserDoes.changeSplitAt(Number(splitSlider.value)));
+    const automatic = el("button", splitAt === automaticSplitAt ? "on" : "", `auto ${automaticSplitAt.toFixed(2)}`);
+    automatic.type = "button";
+    automatic.title = "The cut that makes the two groups most different (Otsu's method)";
+    automatic.addEventListener("click", () => whenUserDoes.changeSplitAt(null));
+    splitControl.append(splitSlider, splitReadout, automatic);
+    controls.append(splitControl);
+  }
+
   const steepnessControl = el("label", "control");
+  steepnessControl.hidden = colourMode === "split";
   steepnessControl.append(el("span", "lbl", "min climb"));
   const steepnessSlider = el("input");
   Object.assign(steepnessSlider, { type: "range", min: "0", max: "1", step: "0.1", value: String(minimumSteepness) });
@@ -594,9 +838,22 @@ function describeStep(offenderMap, stepIndex) {
   return `${stepIndex}/${commitsShown} · ${step.commit.subject} · ${who}`;
 }
 
-function describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare }) {
+function describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectangle, caseToCompare, colourMode, colouring, splitAt }) {
   const parts = [];
-  if (selectedRectangle !== null) {
+  if (colourMode === "split") {
+    parts.push(`split at I ${splitAt.toFixed(2)}: ${colouring.stableSide} stable · ${colouring.unstableSide} unstable · ${arrowsShown.length} stable → unstable`);
+  } else if (colourMode === "indirect" && selectedRectangle !== null) {
+    const found = selectedRectangle.indirect;
+    parts.push(found.climb > 0
+      ? `${nameForPeople(selectedRectangle.data)} reaches I ${found.reachedInstability.toFixed(2)} in ${plural(found.chain.length - 1, "step")} (climb ${found.climb.toFixed(2)}${found.onlyIndirectly ? ", only indirectly" : ""})`
+      : `${nameForPeople(selectedRectangle.data)} reaches nothing less stable`);
+  } else if (colourMode === "indirect") {
+    parts.push(`${colouring.reachIndirectly} folders reach less stable code only indirectly · pick one for its chain`);
+  } else if (colourMode === "coupling") {
+    parts.push(selectedRectangle === null
+      ? "pick a folder"
+      : `${nameForPeople(selectedRectangle.data)}: coupled to ${plural(colouring.coupledFolders, "folder")}`);
+  } else if (selectedRectangle !== null) {
     const importsCount = arrowsShown.filter((arrow) => arrow.direction === "out").length;
     parts.push(`${nameForPeople(selectedRectangle.data)}: imports ${importsCount}, imported by ${arrowsShown.length - importsCount}`);
   } else if (caseToCompare !== null) {
@@ -612,25 +869,35 @@ function describeWhatIsShown({ allArrows, arrowsShown, stepIndex, selectedRectan
   return el("p", "view-summary", parts.join(" · "));
 }
 
-function drawLegend(aFolderIsSelected) {
+function drawLegend(aFolderIsSelected, colourMode) {
   const legend = el("div", "legend offender-legend");
   const scale = el("span", "legend-item");
-  scale.title = "White: no uphill links. Darkest red: the worst folder on its nesting level.";
-  scale.append(el("span", "", "ok"), el("i", "offence-scale-bar"), el("span", "", "worst"));
+  if (colourMode === "split") {
+    scale.append(el("i", "sw side stable"), el("span", "", "stable side"), el("i", "sw side unstable"), el("span", "", "unstable side"));
+  } else if (colourMode === "indirect") {
+    scale.title = "How much less stable the least stable folder it reaches through imports is";
+    scale.append(el("span", "", "0"), el("i", "offence-scale-bar indirect"), el("span", "", "1 climb"));
+  } else if (colourMode === "coupling") {
+    scale.title = "File imports between each folder and the picked one, both ways";
+    scale.append(el("span", "", "none"), el("i", "offence-scale-bar coupling"), el("span", "", "most"));
+  } else {
+    scale.title = "White: no uphill links. Darkest red: the worst folder on its nesting level.";
+    scale.append(el("span", "", "ok"), el("i", "offence-scale-bar"), el("span", "", "worst"));
+  }
   legend.append(scale);
   const key = (className, text) => {
     const item = el("span", "legend-item");
     item.append(el("i", className), document.createTextNode(text));
     legend.append(item);
   };
-  key("sw line out", "imports");
-  if (aFolderIsSelected) key("sw line in", "imported by");
+  key("sw line out", colourMode === "split" ? "stable imports unstable" : colourMode === "indirect" && aFolderIsSelected ? "chain" : "imports");
+  if (aFolderIsSelected && colourMode !== "indirect") key("sw line in", "imported by");
   key("sw line became-uphill", "new uphill");
   key("sw outline-key changed-in-this-step", "changed");
   return legend;
 }
 
-function describeSelectedFolder(rectangle, minimumSteepness) {
+function describeSelectedFolder(rectangle, minimumSteepness, colourMode, splitAt) {
   const box = el("div", "selected-folder");
   const offence = rectangle.offence;
   box.append(el("h3", "", nameForPeople(rectangle.data)));
@@ -639,6 +906,12 @@ function describeSelectedFolder(rectangle, minimumSteepness) {
     return box;
   }
   box.append(el("p", "", `I ${offence.measured.instability.toFixed(2)} · score ${offence.score.toFixed(2)}`));
+  if (colourMode === "split") {
+    box.append(el("p", "", offence.measured.instability < splitAt ? "stable side" : "unstable side"));
+  }
+  if (colourMode === "indirect" && rectangle.indirect !== undefined && rectangle.indirect.chain.length > 1) {
+    box.append(el("p", "", `chain: ${rectangle.indirect.chain.join(" → ")}`));
+  }
   const list = el("ul", "uphill-links");
   const MOST_LINKS_LISTED = 3;
   for (const link of offence.allUphillLinks.slice(0, MOST_LINKS_LISTED)) {
