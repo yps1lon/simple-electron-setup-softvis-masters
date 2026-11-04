@@ -185,3 +185,55 @@ test("says so when there is nothing to review, and still shows the codebase", ()
 test("names a base that does not exist", () => {
   assert.throws(() => reviewChange({ repo, base: "no-such-branch", decisionsFile }), /not a branch, tag or commit/);
 });
+
+// ---------------------------------------------------------------------------
+// The offender map
+
+test("the offender map has one step before the pull request and one per commit", () => {
+  const offenderMap = review().offenderMap;
+  assert.equal(offenderMap.steps.length, 3);
+  assert.equal(offenderMap.steps[0].commit, null);
+  assert.deepEqual(offenderMap.steps.slice(1).map((step) => step.commit.cls), ["agent", "agent"]);
+  assert.equal(offenderMap.someCommitsSkipped, false);
+  // One level per folder depth (the deepest demo folder is src/features/checkout).
+  assert.equal(offenderMap.deepestFolderDepth, 3);
+  for (const step of offenderMap.steps) assert.deepEqual(step.levels.map((level) => level.mergedToDepth), [1, 2, 3]);
+});
+
+test("the offender map measures each level with folders merged to that depth", () => {
+  const lastStep = review().offenderMap.steps.at(-1);
+  const levelTwo = lastStep.levels[1];
+  // At level 2 the features folders merge into one, so core's two new imports become one link.
+  const coreToFeatures = levelTwo.uphillLinks.find((link) => link.fromFolder === "src/core" && link.toFolder === "src/features");
+  assert.ok(coreToFeatures !== undefined);
+  assert.equal(coreToFeatures.steepnessBeforePullRequest, null);
+  assert.equal(coreToFeatures.importsAddedByPullRequest, 2);
+  assert.ok(levelTwo.folders["src/features"] !== undefined);
+  assert.equal(levelTwo.folders["src/features/checkout"], undefined);
+  // At level 3 the same imports are two separate links.
+  const levelThree = lastStep.levels[2];
+  assert.ok(levelThree.uphillLinks.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/checkout"));
+  assert.ok(levelThree.uphillLinks.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/notifications"));
+});
+
+test("the offender map compares every step with the codebase before the pull request", () => {
+  const steps = review().offenderMap.steps;
+  for (const level of steps[0].levels) {
+    for (const link of level.uphillLinks) {
+      assert.equal(link.importsAddedByPullRequest, 0);
+      assert.equal(link.steepnessBeforePullRequest, link.steepness);
+    }
+  }
+  // Commit 1 touches core, checkout and the ui folders; commit 2 only core.
+  assert.deepEqual(steps[1].foldersChangedInThisStep, ["src/core", "src/features/checkout", "src/ui", "src/ui/badge"]);
+  assert.deepEqual(steps[2].foldersChangedInThisStep, ["src/core"]);
+  assert.deepEqual(steps[2].foldersChangedSinceStart, ["src/core", "src/features/checkout", "src/ui", "src/ui/badge"]);
+});
+
+test("the offender map lays out every folder that exists at any step", () => {
+  const offenderMap = review().offenderMap;
+  const layoutPaths = offenderMap.layoutFolders.map((folder) => folder.folderPath);
+  // src/ui/badge only exists after the first commit, but it is in the layout from the start.
+  assert.ok(layoutPaths.includes("src/ui/badge"));
+  assert.equal(offenderMap.steps[0].levels[2].folders["src/ui/badge"], undefined);
+});

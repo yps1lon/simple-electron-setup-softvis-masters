@@ -1,7 +1,7 @@
-import { drawCascade } from "./cascade.js";
 import { drawLadder } from "./ladder.js";
 import { renderList } from "./list.js";
 import { defaultLevel, drawMatrix } from "./matrix.js";
+import { drawOffenderMap } from "./offender-map.js";
 import { renderPanel } from "./panel.js";
 import { drawRace } from "./race.js";
 import { guard, setStatus } from "./status.js";
@@ -14,12 +14,12 @@ import { baseName, decisionLabel, el, hideTip, plural } from "./ui.js";
 // holds the review it was handed and updates it in place when a decision is
 // recorded.
 
-const TABS = ["ladder", "matrix", "treemap", "cascade", "race"];
+const TABS = ["offenders", "ladder", "matrix", "treemap", "race"];
 
 const state = {
   repoPath: null,
   review: null,
-  tab: "ladder",
+  tab: "offenders",
   // { type: "link", id } for a link this change added, or
   // { type: "pair", from, to, depth } for any folder link in the codebase.
   selection: null,
@@ -27,7 +27,9 @@ const state = {
   // null level means the most detailed treemap (every folder).
   treemapLevel: null,
   treemapFocus: null,
-  cascadeFocus: null,
+  // The offender map: how steep a link must be to count as uphill, which
+  // step of the pull request is shown, and which folder is picked.
+  offenderMap: { minimumSteepness: 0.2, stepIndex: 0, selectedFolderKey: null },
   // True only after a To Decide case is chosen in the list. A folder click clears it.
   treemapCase: false,
   // 0 shows every dependency arrow. Each tenth above that hides climbs below it, up to 1.
@@ -73,7 +75,11 @@ async function onReview() {
     state.treemapLevel = review.matrix.levels.length - 1;
     state.treemapFocus = null;
     state.treemapCase = false;
-    state.cascadeFocus = null;
+    state.offenderMap = {
+      minimumSteepness: review.minGap,
+      stepIndex: review.offenderMap.steps.length - 1,
+      selectedFolderKey: null,
+    };
     state.treemapSteepness = 0;
     state.race = { folder: first ? first.from : mostImported(review), dep: first ? first.to : null, tol: 0.2 };
     byId("app").hidden = false;
@@ -138,10 +144,19 @@ function drawView() {
       },
       link: ({ from, to }) => selectPair({ from, to, depth: levels[levelIndex].depth }),
     });
-  } else if (state.tab === "cascade") {
-    drawCascade(byId("view-cascade"), review, { focus: state.cascadeFocus }, {
-      pick: (key) => {
-        state.cascadeFocus = state.cascadeFocus === key ? null : key;
+  } else if (state.tab === "offenders") {
+    drawOffenderMap(byId("view-offenders"), review, state.offenderMap, {
+      changeMinimumSteepness: (value) => {
+        state.offenderMap = { ...state.offenderMap, minimumSteepness: value };
+        drawView();
+      },
+      changeStep: (index) => {
+        state.offenderMap = { ...state.offenderMap, stepIndex: index };
+        drawView();
+      },
+      selectFolder: (key) => {
+        const clickedSameFolderAgain = state.offenderMap.selectedFolderKey === key;
+        state.offenderMap = { ...state.offenderMap, selectedFolderKey: clickedSameFolderAgain ? null : key };
         drawView();
       },
     });

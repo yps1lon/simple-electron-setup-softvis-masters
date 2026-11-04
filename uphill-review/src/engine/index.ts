@@ -5,6 +5,7 @@
  */
 export { readDecisions } from "./decisions.js";
 export { buildMatrix } from "./matrix.js";
+export { buildOffenderMap, chooseCommitsToShow } from "./offender-map.js";
 export { replay, snapshotAt } from "./replay.js";
 export { findUphillLinks } from "./review-core.js";
 export { recordDecision, removeDecision, reviewChange } from "./review.js";

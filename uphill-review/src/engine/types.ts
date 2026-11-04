@@ -291,6 +291,8 @@ export interface ReviewResult {
   links: ReviewLink[];
   matrix: MatrixData;
   history: HistoryData;
+  /** The whole codebase at every step of the change, for the offender map. */
+  offenderMap: OffenderMap;
   stats: {
     /** Commits in the change (base..head). Zero means nothing to review. */
     commits: number;
@@ -307,4 +309,84 @@ export interface ReviewResult {
     /** Links marked meant earlier that the change touched without growing them. */
     quiet: number;
   };
+}
+
+// ---------------------------------------------------------------------------
+// The offender map: the whole codebase at every step of a pull request
+//
+// Words used here:
+// - steepness: how far a link climbs, I(imported folder) - I(importing folder).
+//   Above 0 the link points uphill.
+// - offender: a folder that imports a less stable folder. How much it
+//   offends is the sum of the steepness of those links (the view only counts
+//   links at least as steep as the slider).
+// - level: folders merged to their first N path segments ("src/core/money"
+//   at level 2 is "src/core"). Every folder in the map is measured at the
+//   level of its own depth, so a parent and its child are measured the same
+//   way, just with a different amount of merging.
+
+/** The whole codebase at every step of one pull request. */
+export interface OffenderMap {
+  /**
+   * Every folder that holds files at any step, with how many different files
+   * it holds across all steps. The treemap is laid out from this once, so
+   * rectangles stay in place while you step through the commits.
+   */
+  layoutFolders: LayoutFolder[];
+  /** The deepest folder depth in the codebase, in path segments. */
+  deepestFolderDepth: number;
+  /** Step 0 is the codebase before the pull request; the last step is its newest commit. */
+  steps: PullRequestStep[];
+  /** True when the pull request had more commits than the map keeps, so some were skipped. */
+  someCommitsSkipped: boolean;
+}
+
+export interface LayoutFolder {
+  folderPath: string;
+  fileCountForLayout: number;
+}
+
+export interface PullRequestStep {
+  /** Null for step 0, the codebase before the pull request. */
+  commit: CommitRef | null;
+  /** Folders with architecture files changed by this step alone. */
+  foldersChangedInThisStep: string[];
+  /** Folders with architecture files changed since before the pull request. */
+  foldersChangedSinceStart: string[];
+  /** One entry per level, from 1 (top folders) to deepestFolderDepth (every folder on its own). */
+  levels: MeasuredLevel[];
+}
+
+export interface MeasuredLevel {
+  /** Folders merged to this many path segments. */
+  mergedToDepth: number;
+  /** Folder path (at this level) -> its numbers. */
+  folders: Record<string, MeasuredFolder>;
+  /** Every link at this level that points uphill (steepness above 0), steepest first. */
+  uphillLinks: MeasuredUphillLink[];
+}
+
+export interface MeasuredFolder {
+  instability: number;
+  filesInside: number;
+  /** Ca: files outside the folder that import something in it. */
+  importedByFiles: number;
+  /** Ce: files inside the folder that import something outside it. */
+  importsFilesOutside: number;
+}
+
+export interface MeasuredUphillLink {
+  fromFolder: string;
+  toFolder: string;
+  steepness: number;
+  /** File imports behind the link at this step. */
+  importCount: number;
+  /**
+   * The link's steepness before the pull request, at the same level. Null
+   * when the two folders were not linked at all then. Zero or below means it
+   * was there but did not point uphill.
+   */
+  steepnessBeforePullRequest: number | null;
+  /** File imports behind the link that the pull request added (0 at step 0). */
+  importsAddedByPullRequest: number;
 }

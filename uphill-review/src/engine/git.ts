@@ -219,3 +219,28 @@ export function classify(author: string, body: string): { cls: AuthorClass; tool
   }
   return { cls: "human", tools: [] };
 }
+
+/**
+ * The commits a pull request adds, oldest first: the first-parent commits
+ * after the point where the branch left the base, up to and including head.
+ */
+export function listCommitsBetween(repo: string, startCommit: string, endCommit: string): string[] {
+  const output = git(repo, ["rev-list", "--reverse", "--first-parent", `${startCommit}..${endCommit}`]);
+  return output.split("\n").filter((line) => line.trim() !== "");
+}
+
+/**
+ * Paths of the files that differ between two commits. Renames are listed as
+ * a removed old path and an added new path, so both folders count as changed.
+ */
+export function filesChangedBetween(repo: string, olderCommit: string, newerCommit: string): string[] {
+  const output = git(repo, ["diff", "--name-only", "--no-renames", "-z", olderCommit, newerCommit]);
+  return output.split("\0").filter((path) => path !== "");
+}
+
+/** One commit as the views show it (date, subject, author, agent-assisted or not). */
+export function describeCommit(repo: string, commit: string): CommitRef {
+  const output = git(repo, ["log", "-1", `--format=%H${US}%an${US}%cI${US}%B`, commit]);
+  const [sha, author, date, body] = output.split(US);
+  return commitRef({ sha: sha.trim(), parent: null, author, date: date.trim(), body: body ?? "", changes: [] });
+}

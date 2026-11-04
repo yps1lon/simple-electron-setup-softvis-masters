@@ -5,16 +5,20 @@ import {
   commitDate,
   countCommits,
   currentBranch,
+  describeCommit,
+  filesChangedBetween,
   git,
   gitBuffer,
+  listCommitsBetween,
   mergeBase,
   resolveCommit,
   userName,
 } from "./git.js";
 import { buildMatrix } from "./matrix.js";
+import { buildOffenderMap, chooseCommitsToShow, type CommitInPullRequest } from "./offender-map.js";
 import { edgeKey, monthOf, replay, snapshotAt, windowStart, type ReplayResult } from "./replay.js";
 import { DEFAULT_MIN_GAP, findUphillLinks } from "./review-core.js";
-import type { Birth, Decision, DecisionRecord, HistoryData, ReviewResult } from "./types.js";
+import type { Birth, Decision, DecisionRecord, HistoryData, OffenderMap, ReviewResult, Snapshot } from "./types.js";
 
 /**
  * Review one change: the checked-out branch (or `head`) against the branch
@@ -55,12 +59,18 @@ export function reviewChange(options: ReviewOptions): ReviewResult {
   const minGap = options.minGap ?? DEFAULT_MIN_GAP;
   const headMonth = monthOf(commitDate(repo, headCommit));
 
+  // The offender map shows the codebase after each commit of the change, so
+  // the replay keeps a graph for each of those commits as it passes them.
+  const { commits: commitsToShow, someCommitsSkipped } = chooseCommitsToShow(
+    listCommitsBetween(repo, baseCommit, headCommit),
+  );
+
   const run = replay({
     repo,
     head: headCommit,
     sinceMonth: windowStart(headMonth, options.months ?? 12),
     headMonth,
-    capture: [baseCommit],
+    capture: [baseCommit, ...commitsToShow],
   });
   // The merge base is on the replayed path unless it is older than the
   // window or came in through a merge; then it is parsed on its own.
@@ -99,6 +109,7 @@ export function reviewChange(options: ReviewOptions): ReviewResult {
     links: core.links,
     matrix: buildMatrix(head, base, core.links, decisions, minGap),
     history: history(run),
+    offenderMap: offenderMapOfChange(repo, run, base, head, headCommit, baseCommit, commitsToShow, someCommitsSkipped),
     stats: {
       commits: changeCommits,
       agentCommits: changeCommits === 0 ? 0 : agentCommits(repo, range),
@@ -146,6 +157,36 @@ export function removeDecision(decisionsFile: string, from: string, to: string):
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * The offender map for this change: the codebase before it, then after each
+ * commit shown. A commit the replay passed already has its graph; one it did
+ * not pass (older than the history window, or reached through a merge) is
+ * parsed on its own.
+ */
+function offenderMapOfChange(
+  repo: string,
+  run: ReplayResult,
+  snapshotBeforePullRequest: Snapshot,
+  snapshotAtHead: Snapshot,
+  headCommit: string,
+  baseCommit: string,
+  commitsToShow: string[],
+  someCommitsSkipped: boolean,
+): OffenderMap {
+  const commitsInPullRequest: CommitInPullRequest[] = [];
+  let commitOfStepBefore = baseCommit;
+  for (const commit of commitsToShow) {
+    const snapshot = commit === headCommit ? snapshotAtHead : (run.captured.get(commit) ?? snapshotAt(repo, commit));
+    commitsInPullRequest.push({
+      commit: describeCommit(repo, commit),
+      snapshot,
+      filesChangedSinceStepBefore: filesChangedBetween(repo, commitOfStepBefore, commit),
+    });
+    commitOfStepBefore = commit;
+  }
+  return buildOffenderMap({ snapshotBeforePullRequest, commitsInPullRequest, someCommitsSkipped });
+}
 
 function history(run: ReplayResult): HistoryData {
   const instability: Record<string, (number | null)[]> = {};

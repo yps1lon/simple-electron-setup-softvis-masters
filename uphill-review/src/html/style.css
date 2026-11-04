@@ -13,6 +13,8 @@
   --agent: #8f7cf7;
   --human: #cfcfcf;
   --accent: #4e79a7;
+  /* Changed by the pull request (outlines and arrows on the offender map). Blue, so it never reads as offence red. */
+  --changed: #2f80ed;
 }
 
 * {
@@ -978,14 +980,175 @@ svg.matrix {
   stroke-width: 1.5;
 }
 
-.cascade rect.frame,
-.cascade rect.cell {
+/* ---- offender map: cascaded treemap, white to red by offence ---- */
+
+.offender-map rect.frame,
+.offender-map rect.cell {
   cursor: pointer;
+  stroke: rgba(0, 0, 0, 0.18);
+  stroke-width: 1;
 }
 
-.cascade rect.frame {
-  stroke: rgba(255, 255, 255, 0.14);
-  stroke-width: 1;
+.offender-map .label text {
+  fill: #1a1a1a;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.offender-map .label.on-dark text {
+  fill: #ffffff;
+}
+
+.offender-map .label .count {
+  font-size: 10px;
+  fill-opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.offender-map rect.outline {
+  fill: none;
+  pointer-events: none;
+}
+
+.offender-map rect.outline.changed-in-this-step {
+  stroke: var(--changed);
+  stroke-width: 3;
+}
+
+.offender-map rect.outline.changed-earlier-in-pull-request {
+  stroke: var(--changed);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.offender-map rect.outline.selected {
+  stroke: #111;
+  stroke-width: 3;
+}
+
+.offender-map .became-uphill path {
+  fill: none;
+}
+
+.offender-map .became-uphill .halo {
+  stroke: #ffffff;
+  stroke-width: 5;
+  stroke-opacity: 0.85;
+  pointer-events: none;
+}
+
+.offender-map .became-uphill .line {
+  stroke: var(--changed);
+  stroke-width: 2.5;
+  cursor: help;
+}
+
+.offender-map .became-uphill.by-drift .line {
+  stroke-dasharray: 6 4;
+}
+
+.offender-map .arrow-head {
+  fill: var(--changed);
+}
+
+.offender-map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.offender-map-controls .control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offender-map-controls .readout {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+}
+
+.offender-map-controls .step-caption {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ink);
+}
+
+.offender-legend .offence-scale-bar {
+  display: inline-block;
+  width: 120px;
+  height: 10px;
+  margin: 0 6px;
+  vertical-align: middle;
+  border: 1px solid var(--line);
+  background: linear-gradient(to right, #ffffff, rgb(178, 24, 43));
+}
+
+.offender-legend .outline-key,
+.offender-legend .arrow-key {
+  display: inline-block;
+  width: 22px;
+  height: 10px;
+  margin: 0 6px 0 12px;
+  vertical-align: middle;
+  background: transparent;
+}
+
+.offender-legend .outline-key.changed-in-this-step {
+  border: 3px solid var(--changed);
+}
+
+.offender-legend .outline-key.changed-earlier-in-pull-request {
+  border: 1.5px dashed var(--changed);
+}
+
+.offender-legend .arrow-key.by-new-import {
+  height: 0;
+  border-top: 3px solid var(--changed);
+}
+
+.offender-legend .arrow-key.by-drift {
+  height: 0;
+  border-top: 3px dashed var(--changed);
+}
+
+.offender-legend .darkest-per-level {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.selected-folder {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.selected-folder h3 {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.selected-folder p {
+  margin: 4px 0;
+}
+
+.selected-folder .uphill-links {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.selected-folder .uphill-links li.counted {
+  color: var(--ink);
+}
+
+.selected-folder .uphill-links li.below-slider {
+  color: var(--muted);
 }
 
 /* ---- tooltip ---- */

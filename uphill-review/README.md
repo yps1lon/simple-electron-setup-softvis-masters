@@ -20,6 +20,7 @@ The list shows the three uphill imports the branch adds, riskiest first:
 
 Things to try:
 
+- **Offenders** (opens first): the whole codebase as a cascaded treemap. Area is file count. A folder is white when it imports nothing less stable than itself, and red when it does: its offence is the sum of how steep those uphill links are, and the darkest red on each nesting level is the worst folder on that level. The slider sets how steep a link must be to count. Each folder is measured at its own depth, with its subfolders merged into it, so `src/core` offends by importing `src/features` as a whole. Step through the pull request with the stepper: the layout stays still, blue outlines mark changed folders, and blue arrows mark links that became uphill (solid: a new import; dashed: drift). Click a folder for its links.
 - **Ladder**: hover the red arrow to see the import line, the commit and whether it was agent-assisted. Hover a dot for its numbers.
 - **Matrix**: every folder link in the codebase, sorted by instability, so every uphill link sits above the diagonal. Switch depth to see merging hide links. Click a cell to select that link in every view.
 - **History**: the stability race for `src/core`. The Apr 2026 link to `src/data` was born by a new import (light dot); the Jun 2026 link to `src/config` by drift (ring): the import was already there and config became less stable. The two violet dots in Sep 2026 are this pull request's links from `src/core`.
@@ -55,8 +56,8 @@ Pick `outline`, set base to `1cc4d879d~1`, then click **Review change**. It flag
 
 ## Files
 
-- `src/engine`: the engine (TypeScript, a library): `imports.ts`, `resolve.ts`, `git.ts`, `replay.ts` (the replay), `stability.ts`, `review-core.ts` (the review and the piece), `matrix.ts`, `decisions.ts`, `review.ts` (puts it together), `types.ts` (the contract with the UI)
-- `src/renderer`: the views, in plain DOM and SVG: `ladder.js`, `matrix.js`, `race.js`, `list.js`, `panel.js`, `renderer.js` (the shell and the linked selection)
+- `src/engine`: the engine (TypeScript, a library): `imports.ts`, `resolve.ts`, `git.ts`, `replay.ts` (the replay), `stability.ts`, `review-core.ts` (the review and the piece), `matrix.ts`, `offender-map.ts` (every folder at its own depth, for each step of the pull request), `decisions.ts`, `review.ts` (puts it together), `types.ts` (the contract with the UI)
+- `src/renderer`: the views, in plain DOM and SVG: `offender-map.js`, `ladder.js`, `treemap.js`, `matrix.js`, `race.js`, `list.js`, `panel.js`, `renderer.js` (the shell and the linked selection)
 - `src/main`: Electron main process and the preload bridge (`window.uphill`)
 - `demo/make-demo-repo.mjs`: the demo repository
 - `test/review.test.mjs`: engine tests, `npm test`
