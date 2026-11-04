@@ -145,7 +145,8 @@ function drawView() {
       link: ({ from, to }) => selectPair({ from, to, depth: levels[levelIndex].depth }),
     });
   } else if (state.tab === "offenders") {
-    drawOffenderMap(byId("view-offenders"), review, state.offenderMap, {
+    const caseToCompare = state.treemapCase ? openCase() : null;
+    drawOffenderMap(byId("view-offenders"), review, { ...state.offenderMap, caseToCompare }, {
       changeMinimumSteepness: (value) => {
         state.offenderMap = { ...state.offenderMap, minimumSteepness: value };
         drawView();
@@ -155,9 +156,15 @@ function drawView() {
         drawView();
       },
       selectFolder: (key) => {
+        // Like the flat treemap: a folder click leaves the To Decide case.
+        state.treemapCase = false;
         const clickedSameFolderAgain = state.offenderMap.selectedFolderKey === key;
         state.offenderMap = { ...state.offenderMap, selectedFolderKey: clickedSameFolderAgain ? null : key };
         drawView();
+      },
+      selectLink: ({ from, to, depth }) => {
+        const deepest = review.offenderMap.deepestFolderDepth;
+        selectPair({ from, to, depth: depth === deepest ? null : depth });
       },
     });
   } else if (state.tab === "matrix") {

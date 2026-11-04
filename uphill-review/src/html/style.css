@@ -1026,29 +1026,25 @@ svg.matrix {
   stroke-width: 3;
 }
 
-.offender-map .became-uphill path {
-  fill: none;
+.offender-map rect.dim {
+  opacity: 0.28;
 }
 
-.offender-map .became-uphill .halo {
+.offender-map .label.dim {
+  opacity: 0.4;
+}
+
+/* Arrows that became uphill during the pull request: a white glow under the arrow. */
+.offender-map .became-uphill-glow {
   stroke: #ffffff;
-  stroke-width: 5;
-  stroke-opacity: 0.85;
+  stroke-opacity: 0.9;
+  stroke-linecap: round;
   pointer-events: none;
 }
 
-.offender-map .became-uphill .line {
-  stroke: var(--changed);
-  stroke-width: 2.5;
-  cursor: help;
-}
-
-.offender-map .became-uphill.by-drift .line {
-  stroke-dasharray: 6 4;
-}
-
-.offender-map .arrow-head {
-  fill: var(--changed);
+.offender-map .became-uphill-glow.by-drift,
+.offender-map .dep.by-drift {
+  stroke-dasharray: 7 5;
 }
 
 .offender-map-controls {
@@ -1086,8 +1082,7 @@ svg.matrix {
   background: linear-gradient(to right, #ffffff, rgb(178, 24, 43));
 }
 
-.offender-legend .outline-key,
-.offender-legend .arrow-key {
+.offender-legend .outline-key {
   display: inline-block;
   width: 22px;
   height: 10px;
@@ -1104,14 +1099,9 @@ svg.matrix {
   border: 1.5px dashed var(--changed);
 }
 
-.offender-legend .arrow-key.by-new-import {
-  height: 0;
-  border-top: 3px solid var(--changed);
-}
-
-.offender-legend .arrow-key.by-drift {
-  height: 0;
-  border-top: 3px dashed var(--changed);
+.sw.line.became-uphill {
+  border-top: 3px solid #5aa2ff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85);
 }
 
 .offender-legend .darkest-per-level {

@@ -2,8 +2,9 @@ import { hierarchy, treemap } from "d3-hierarchy";
 import { el, hover, plural, svgEl } from "./ui.js";
 
 /**
- * The offender map: the whole codebase as a cascaded treemap, with every
- * folder coloured by how much it breaks the stable-dependencies principle.
+ * The cascade: the whole codebase as a cascaded treemap, with every folder
+ * coloured by how much it breaks the stable-dependencies principle, and every
+ * dependency drawn as an arrow the same way the flat treemap draws them.
  *
  * How to read it:
  * - Each rectangle is a folder. Its area is how many files it holds.
@@ -20,12 +21,23 @@ import { el, hover, plural, svgEl } from "./ui.js";
  *   subfolders merged into it, so imports between its own subfolders do not
  *   count against it.
  *
+ * The arrows work like the flat treemap's:
+ * - Every dependency is an arrow, thicker when more files import across it,
+ *   with that count written on the line. Each import is drawn once, from the
+ *   most detailed rectangle it starts in.
+ * - The slider hides arrows that climb by less than its value (0 shows every
+ *   arrow, also downhill ones).
+ * - Click a folder to keep only the arrows that touch it: blue leaves it
+ *   (what it imports), red arrives (what depends on it). Click it again to
+ *   see every arrow.
+ * - Choosing a case in the To Decide list shows only that case's arrow.
+ *
  * The pull request part: the stepper moves from the codebase before the pull
  * request through each of its commits. The layout never moves; only colours,
- * outlines and arrows change. Blue outlines mark folders the pull request
- * changed, and blue arrows mark links that became uphill during it (solid:
- * a new import did it; dashed: drift, the import was there and the folders'
- * instability moved).
+ * outlines and arrows change. Outlines mark folders the pull request changed.
+ * Arrows that became uphill during the pull request get a white glow, solid
+ * when a new import did it and dashed for drift (the import was there and the
+ * folders' instability moved).
  */
 
 const SPACE_FOR_FOLDER_NAME = 16;
@@ -33,12 +45,15 @@ const CASCADE_STEP = 3;
 const WHITE = [255, 255, 255];
 const DARKEST_RED = [178, 24, 43];
 const BACKGROUND_OF_WHOLE_CODEBASE = "#2e2e2e";
+const WHAT_IT_IMPORTS = "#5aa2ff";
+const WHAT_DEPENDS_ON_IT = "#ff6b6e";
+const ROUNDING_NOISE = 1e-9;
 
 /**
  * @param container       the element to draw into
  * @param review          the ReviewResult from the engine
- * @param viewSettings    { minimumSteepness, stepIndex, selectedFolderKey }
- * @param whenUserDoes    { changeMinimumSteepness(value), changeStep(index), selectFolder(key) }
+ * @param viewSettings    { minimumSteepness, stepIndex, selectedFolderKey, caseToCompare: {from, to} | null }
+ * @param whenUserDoes    { changeMinimumSteepness(value), changeStep(index), selectFolder(key), selectLink({from, to, depth}) }
  */
 export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
   container.replaceChildren();
@@ -66,32 +81,47 @@ export function drawOffenderMap(container, review, viewSettings, whenUserDoes) {
     inThisStep: new Set(step.foldersChangedInThisStep),
     sinceStart: new Set(step.foldersChangedSinceStart),
   };
-  const linksThatBecameUphill = findLinksThatBecameUphill(everyRectangle, minimumSteepness, offenderMap.deepestFolderDepth);
+
+  // Clicking the whole-codebase background selects nothing: every arrow is inside it.
+  const selectedRectangle = everyRectangle.find((rectangle) => rectangle.depth > 0 && keyOfFolder(rectangle.data) === viewSettings.selectedFolderKey) ?? null;
+  const caseToCompare = selectedRectangle === null ? (viewSettings.caseToCompare ?? null) : null;
+  const allArrows = everyDependencyArrow(everyRectangle, step, offenderMap.deepestFolderDepth, minimumSteepness);
+  const arrowsShown = chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, caseToCompare });
+  const foldersNearTheChoice = foldersTouchedBy(arrowsShown, selectedRectangle, caseToCompare);
 
   container.append(
     drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes),
-    describeWhatIsShown(everyRectangle, linksThatBecameUphill, step, stepIndex),
-    drawLegend(darkestScoreOnLevel, everyRectangle),
+    describeWhatIsShown({ everyRectangle, allArrows, arrowsShown, step, stepIndex, minimumSteepness, selectedRectangle, caseToCompare }),
+    drawLegend(darkestScoreOnLevel, selectedRectangle !== null),
   );
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, class: "treemap offender-map", role: "img" });
-  svg.setAttribute("aria-label", "Cascaded treemap of the codebase, folders coloured white to red by how much they import less stable folders");
+  svg.setAttribute("aria-label",
+    `Cascaded treemap of the codebase, folders coloured white to red by how much they import less stable folders, with ${arrowsShown.length} dependency arrows`);
   svg.append(drawingDefinitions());
   container.append(svg);
 
   // Outer folders first, so the folders inside them are drawn on top.
   const outerFirst = [...everyRectangle].sort((a, b) => a.depth - b.depth);
   for (const rectangle of outerFirst) {
-    svg.append(drawFolderRectangle(rectangle, darkestScoreOnLevel, changedFolders, viewSettings.selectedFolderKey, whenUserDoes));
+    const dimmed = foldersNearTheChoice !== null && !foldersNearTheChoice.has(rectangle);
+    svg.append(drawFolderRectangle(rectangle, { darkestScoreOnLevel, changedFolders, selectedRectangle, dimmed, whenUserDoes }));
   }
   for (const rectangle of outerFirst) {
-    const label = drawFolderLabel(rectangle, darkestScoreOnLevel);
+    const dimmed = foldersNearTheChoice !== null && !foldersNearTheChoice.has(rectangle);
+    const label = drawFolderLabel(rectangle, darkestScoreOnLevel, dimmed);
     if (label !== null) svg.append(label);
   }
-  for (const link of linksThatBecameUphill) svg.append(drawArrow(link));
 
-  const selectedRectangle = everyRectangle.find((rectangle) => keyOfFolder(rectangle.data) === viewSettings.selectedFolderKey);
-  if (selectedRectangle !== undefined) container.append(describeSelectedFolder(selectedRectangle, minimumSteepness));
+  const arrowLayer = svgEl("g", { class: "deps" });
+  svg.append(arrowLayer);
+  const mostImportsOnOneArrow = Math.max(1, ...arrowsShown.map((arrow) => arrow.link.importCount));
+  // Thin arrows first, so the thick ones are drawn on top and stay readable.
+  for (const arrow of [...arrowsShown].sort((a, b) => a.link.importCount - b.link.importCount)) {
+    drawDependencyArrow(arrowLayer, arrow, mostImportsOnOneArrow, whenUserDoes);
+  }
+
+  if (selectedRectangle !== null) container.append(describeSelectedFolder(selectedRectangle, minimumSteepness));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,8 +235,8 @@ function offenceOfFolder(folder, step, minimumSteepness) {
   }
   const level = step.levels[folder.measuredAtDepth - 1];
   const measured = level.folders[folder.folderPath] ?? null;
-  const allUphillLinks = level.uphillLinks.filter((link) => link.fromFolder === folder.folderPath);
-  const countedLinks = allUphillLinks.filter((link) => link.steepness >= minimumSteepness - 1e-9);
+  const allUphillLinks = level.links.filter((link) => link.fromFolder === folder.folderPath && isUphill(link));
+  const countedLinks = allUphillLinks.filter((link) => isAtLeastAsSteepAs(link, minimumSteepness));
   const score = countedLinks.reduce((sum, link) => sum + link.steepness, 0);
   return { existsAtThisStep: measured !== null, measured, countedLinks, allUphillLinks, score };
 }
@@ -236,33 +266,102 @@ function shareOfWorstOnLevel(rectangle, darkestScoreOnLevel) {
   return darkest > 0 ? rectangle.offence.score / darkest : 0;
 }
 
+function isUphill(link) {
+  return link.steepness > ROUNDING_NOISE;
+}
+
+function isAtLeastAsSteepAs(link, minimumSteepness) {
+  return isUphill(link) && link.steepness >= minimumSteepness - ROUNDING_NOISE;
+}
+
 // ---------------------------------------------------------------------------
-// Links that became uphill during the pull request
+// Arrows
 
 /**
- * Only for folders drawn without subfolders (so each link is drawn once, at
- * the most detailed rectangle). A link counts when it is at least as steep
- * as the slider now, and was not before the pull request.
+ * Every dependency as an arrow. Each import is drawn once, from the rectangle
+ * without subfolders it starts in, at that rectangle's own level, so the
+ * other end is the folder it imports as seen at that level.
  */
-function findLinksThatBecameUphill(everyRectangle, minimumSteepness, deepestFolderDepth) {
+function everyDependencyArrow(everyRectangle, step, deepestFolderDepth, minimumSteepness) {
   const rectangleFor = rectangleFinder(everyRectangle, deepestFolderDepth);
-  const found = [];
-  for (const rectangle of everyRectangle) {
-    if (rectangle.children) continue;
-    for (const link of rectangle.offence.countedLinks) {
-      const wasUphillBefore = link.steepnessBeforePullRequest !== null && link.steepnessBeforePullRequest >= minimumSteepness - 1e-9;
-      if (wasUphillBefore) continue;
-      const target = rectangleFor(link.toFolder, rectangle.data.measuredAtDepth);
-      if (target === undefined) continue;
-      found.push({
-        link,
-        source: rectangle,
-        target,
-        cause: link.importsAddedByPullRequest > 0 ? "new import" : "drift",
-      });
+  const arrows = [];
+  for (const source of everyRectangle) {
+    if (source.children || source.data.measuredAtDepth === null) continue;
+    const level = step.levels[source.data.measuredAtDepth - 1];
+    for (const link of level.links) {
+      if (link.fromFolder !== source.data.folderPath) continue;
+      const target = rectangleFor(link.toFolder, source.data.measuredAtDepth);
+      if (target === undefined || target === source) continue;
+      arrows.push({ link, source, target, pullRequestStory: whatThePullRequestDidToLink(link, minimumSteepness) });
     }
   }
-  return found;
+  return arrows;
+}
+
+/**
+ * "new import" or "drift" when the link counts as uphill now but did not
+ * before the pull request; null when the pull request did not make it uphill.
+ */
+function whatThePullRequestDidToLink(link, minimumSteepness) {
+  if (!isAtLeastAsSteepAs(link, minimumSteepness)) return null;
+  const countedBefore = link.steepnessBeforePullRequest !== null &&
+    link.steepnessBeforePullRequest > ROUNDING_NOISE &&
+    link.steepnessBeforePullRequest >= minimumSteepness - ROUNDING_NOISE;
+  if (countedBefore) return null;
+  return link.importsAddedByPullRequest > 0 ? "new import" : "drift";
+}
+
+/**
+ * Same rules as the flat treemap: a case from the To Decide list shows only
+ * its arrow; otherwise the slider hides climbs below its value, and a picked
+ * folder keeps only the arrows that touch it.
+ */
+function chooseArrowsToShow(allArrows, { minimumSteepness, selectedRectangle, caseToCompare }) {
+  if (caseToCompare !== null) {
+    return allArrows
+      .filter((arrow) => arrowMatchesCase(arrow, caseToCompare))
+      .map((arrow) => ({ ...arrow, direction: "out" }));
+  }
+  const shown = [];
+  for (const arrow of allArrows) {
+    if (minimumSteepness > 0 && !isAtLeastAsSteepAs(arrow.link, minimumSteepness)) continue;
+    if (selectedRectangle === null) {
+      shown.push({ ...arrow, direction: "out" });
+      continue;
+    }
+    const startsInSelection = isInside(arrow.source, selectedRectangle);
+    const endsInSelection = isInside(arrow.target, selectedRectangle);
+    if (startsInSelection === endsInSelection) continue; // touches it from neither side, or stays inside it
+    shown.push({ ...arrow, direction: startsInSelection ? "out" : "in" });
+  }
+  return shown;
+}
+
+/**
+ * A case names two folders exactly. Its arrow starts at the first folder's
+ * rectangle and ends at the second folder as the arrow's own level sees it
+ * (merged to that many path segments).
+ */
+function arrowMatchesCase(arrow, caseToCompare) {
+  const startsAtCaseFolder = arrow.source.data.folderPath === caseToCompare.from;
+  const caseTargetAtThisLevel = mergeToDepth(caseToCompare.to, arrow.source.data.measuredAtDepth);
+  return startsAtCaseFolder && arrow.link.toFolder === caseTargetAtThisLevel;
+}
+
+/** The rectangles to keep bright while a folder or a case is picked; null when nothing is picked. */
+function foldersTouchedBy(arrowsShown, selectedRectangle, caseToCompare) {
+  if (selectedRectangle === null && caseToCompare === null) return null;
+  const bright = new Set();
+  for (const arrow of arrowsShown) {
+    for (const end of [arrow.source, arrow.target]) {
+      for (let rectangle = end; rectangle !== null; rectangle = rectangle.parent) bright.add(rectangle);
+    }
+  }
+  if (selectedRectangle !== null) {
+    selectedRectangle.each((inside) => bright.add(inside));
+    for (let rectangle = selectedRectangle; rectangle !== null; rectangle = rectangle.parent) bright.add(rectangle);
+  }
+  return bright;
 }
 
 /**
@@ -284,10 +383,17 @@ function rectangleFinder(everyRectangle, deepestFolderDepth) {
   };
 }
 
+function isInside(rectangle, possibleAncestor) {
+  for (let current = rectangle; current !== null; current = current.parent) {
+    if (current === possibleAncestor) return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Drawing
 
-function drawFolderRectangle(rectangle, darkestScoreOnLevel, changedFolders, selectedFolderKey, whenUserDoes) {
+function drawFolderRectangle(rectangle, { darkestScoreOnLevel, changedFolders, selectedRectangle, dimmed, whenUserDoes }) {
   const folder = rectangle.data;
   const group = svgEl("g", rectangle.children ? { filter: "url(#cascade-shadow)" } : {});
   const isWholeCodebase = rectangle.depth === 0;
@@ -297,7 +403,7 @@ function drawFolderRectangle(rectangle, darkestScoreOnLevel, changedFolders, sel
   if (!isWholeCodebase) fill = rectangle.offence.existsAtThisStep ? colourForScore(rectangle.offence.score, darkest) : "url(#not-here-yet)";
 
   const shape = svgEl("rect", {
-    class: rectangle.children ? "frame" : "cell",
+    class: `${rectangle.children ? "frame" : "cell"}${dimmed ? " dim" : ""}`,
     x: rectangle.x0,
     y: rectangle.y0,
     width: rectangle.x1 - rectangle.x0,
@@ -324,7 +430,7 @@ function drawFolderRectangle(rectangle, darkestScoreOnLevel, changedFolders, sel
     if (changedFolders.inThisStep.has(folder.folderPath)) outlines.push("changed-in-this-step");
     else if (changedFolders.sinceStart.has(folder.folderPath)) outlines.push("changed-earlier-in-pull-request");
   }
-  if (keyOfFolder(folder) === selectedFolderKey) outlines.push("selected");
+  if (rectangle === selectedRectangle) outlines.push("selected");
   for (const outline of outlines) {
     group.append(svgEl("rect", {
       class: `outline ${outline}`,
@@ -337,13 +443,13 @@ function drawFolderRectangle(rectangle, darkestScoreOnLevel, changedFolders, sel
   return group;
 }
 
-function drawFolderLabel(rectangle, darkestScoreOnLevel) {
+function drawFolderLabel(rectangle, darkestScoreOnLevel, dimmed) {
   const width = rectangle.x1 - rectangle.x0;
   const height = rectangle.y1 - rectangle.y0;
   if (width < 28 || height < 12) return null;
 
   const isDarkFill = rectangle.depth === 0 || shareOfWorstOnLevel(rectangle, darkestScoreOnLevel) > 0.55;
-  const group = svgEl("g", { class: isDarkFill ? "label on-dark" : "label" });
+  const group = svgEl("g", { class: `label${isDarkFill ? " on-dark" : ""}${dimmed ? " dim" : ""}` });
   const clipId = `offender-map-clip-${rectangle.x0}-${rectangle.y0}-${rectangle.depth}`;
   const clip = svgEl("clipPath", { id: clipId });
   clip.append(svgEl("rect", { x: rectangle.x0, y: rectangle.y0, width, height }));
@@ -353,35 +459,68 @@ function drawFolderLabel(rectangle, darkestScoreOnLevel) {
   const name = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 12 });
   name.textContent = rectangle.data.folderPath === "." ? "root" : rectangle.data.name;
   text.append(name);
-  if (!rectangle.children && height >= 28 && rectangle.offence.score > 0) {
-    const score = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 24, class: "count" });
-    score.textContent = `offence ${rectangle.offence.score.toFixed(2)}`;
-    text.append(score);
+  if (!rectangle.children && height >= 28 && rectangle.offence.measured !== null) {
+    const numbers = svgEl("tspan", { x: rectangle.x0 + 4, y: rectangle.y0 + 24, class: "count" });
+    numbers.textContent = `I ${rectangle.offence.measured.instability.toFixed(2)}` +
+      (rectangle.offence.score > 0 ? ` · offence ${rectangle.offence.score.toFixed(2)}` : "");
+    text.append(numbers);
   }
   group.append(text);
   return group;
 }
 
-/** A curved arrow between the middles of two folders, so arrows both ways do not overlap. */
-function drawArrow({ source, target, cause, link }) {
-  const start = middleOf(source);
-  const end = middleOf(target);
-  const bend = 0.2;
-  const control = {
-    x: (start.x + end.x) / 2 - (end.y - start.y) * bend,
-    y: (start.y + end.y) / 2 + (end.x - start.x) * bend,
-  };
-  const path = `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`;
-  const group = svgEl("g", { class: `became-uphill ${cause === "new import" ? "by-new-import" : "by-drift"}` });
-  group.append(svgEl("path", { class: "halo", d: path }));
-  const line = svgEl("path", { class: "line", d: path, "marker-end": "url(#arrow-head)" });
-  hover(line, () => [
-    `${link.fromFolder} → ${link.toFolder}`,
-    `became uphill in this pull request (${cause === "new import" ? "a new import" : "drift: the import was already there"})`,
-    `steepness ${link.steepness.toFixed(2)}, ${plural(link.importCount, "file import")}, ${link.importsAddedByPullRequest} added by the pull request`,
-  ].join("\n"));
-  group.append(line);
-  return group;
+/** A straight arrow between the middles of two folders, drawn like the flat treemap's. */
+function drawDependencyArrow(layer, arrow, mostImportsOnOneArrow, whenUserDoes) {
+  const { link, source, target, direction, pullRequestStory } = arrow;
+  const line = shortenAtBothEnds(middleOf(source), middleOf(target), 16);
+  const thickness = (1.25 + (link.importCount / mostImportsOnOneArrow) * 4).toFixed(2);
+  const coordinates = { x1: line.start.x, y1: line.start.y, x2: line.end.x, y2: line.end.y };
+
+  if (pullRequestStory !== null) {
+    layer.append(svgEl("line", {
+      class: `became-uphill-glow ${pullRequestStory === "new import" ? "by-new-import" : "by-drift"}`,
+      ...coordinates,
+      "stroke-width": (Number(thickness) + 5).toFixed(2),
+    }));
+  }
+  layer.append(svgEl("line", {
+    class: `dep ${direction}${pullRequestStory === "drift" ? " by-drift" : ""}`,
+    ...coordinates,
+    "stroke-width": thickness,
+    "marker-end": direction === "in" ? "url(#cascade-arrow-in)" : "url(#cascade-arrow-out)",
+  }));
+
+  const clickArea = svgEl("line", {
+    class: "dep-hit",
+    ...coordinates,
+    role: "button",
+    tabindex: "0",
+    "aria-label": `${link.fromFolder} imports ${link.toFolder}, ${plural(link.importCount, "file")}, steepness ${link.steepness.toFixed(2)}`,
+  });
+  hover(clickArea, () => describeArrowForTooltip(arrow));
+  const selectThisLink = () => whenUserDoes.selectLink({ from: link.fromFolder, to: link.toFolder, depth: source.data.measuredAtDepth });
+  clickArea.addEventListener("click", (event) => {
+    event.stopPropagation();
+    selectThisLink();
+  });
+  clickArea.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectThisLink();
+    }
+  });
+  layer.append(clickArea);
+
+  const length = Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y);
+  if (length < 46) return;
+  const importCountLabel = svgEl("text", {
+    class: `weight ${direction}`,
+    x: line.start.x + (line.end.x - line.start.x) * 0.55,
+    y: line.start.y + (line.end.y - line.start.y) * 0.55,
+    "text-anchor": "middle",
+  });
+  importCountLabel.textContent = String(link.importCount);
+  layer.append(importCountLabel);
 }
 
 function drawingDefinitions() {
@@ -393,11 +532,14 @@ function drawingDefinitions() {
   const notHereYet = svgEl("pattern", { id: "not-here-yet", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" });
   notHereYet.append(svgEl("rect", { width: 6, height: 6, fill: "#3a3a3a" }), svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 6, stroke: "#5a5a5a", "stroke-width": 2 }));
 
-  const arrowHead = svgEl("marker", { id: "arrow-head", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
-  arrowHead.append(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "arrow-head" }));
-
-  definitions.append(shadow, notHereYet, arrowHead);
+  definitions.append(shadow, notHereYet, arrowHead("cascade-arrow-out", WHAT_IT_IMPORTS), arrowHead("cascade-arrow-in", WHAT_DEPENDS_ON_IT));
   return definitions;
+}
+
+function arrowHead(id, colour) {
+  const marker = svgEl("marker", { id, viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 6, markerHeight: 6, markerUnits: "userSpaceOnUse", orient: "auto" });
+  marker.append(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: colour }));
+  return marker;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,13 +549,13 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
   const controls = el("div", "view-head offender-map-controls");
 
   const steepnessControl = el("label", "control");
-  steepnessControl.append(el("span", "lbl", "count a link as uphill when it climbs at least"));
+  steepnessControl.append(el("span", "lbl", "climbs of at least"));
   const steepnessSlider = el("input");
-  Object.assign(steepnessSlider, { type: "range", min: "0.05", max: "1", step: "0.05", value: String(minimumSteepness) });
-  steepnessSlider.setAttribute("aria-label", "Smallest steepness that counts as uphill");
-  const steepnessReadout = el("span", "readout", minimumSteepness.toFixed(2));
+  Object.assign(steepnessSlider, { type: "range", min: "0", max: "1", step: "0.1", value: String(minimumSteepness) });
+  steepnessSlider.setAttribute("aria-label", "Smallest climb in instability that counts and is drawn");
+  const steepnessReadout = el("span", "readout", describeSlider(minimumSteepness));
   steepnessSlider.addEventListener("input", () => {
-    steepnessReadout.textContent = Number(steepnessSlider.value).toFixed(2);
+    steepnessReadout.textContent = describeSlider(Number(steepnessSlider.value));
   });
   steepnessSlider.addEventListener("change", () => whenUserDoes.changeMinimumSteepness(Number(steepnessSlider.value)));
   steepnessControl.append(steepnessSlider, steepnessReadout);
@@ -441,6 +583,10 @@ function drawControls(offenderMap, stepIndex, minimumSteepness, whenUserDoes) {
   return controls;
 }
 
+function describeSlider(value) {
+  return value > 0 ? value.toFixed(1) : "0 (every arrow)";
+}
+
 function describeStep(offenderMap, stepIndex) {
   const step = offenderMap.steps[stepIndex];
   const commitsShown = offenderMap.steps.length - 1;
@@ -454,34 +600,51 @@ function describeStep(offenderMap, stepIndex) {
   return `After commit ${stepIndex} of ${commitsShown}: ${step.commit.date} "${step.commit.subject}", ${who}.${skipped}`;
 }
 
-function describeWhatIsShown(everyRectangle, linksThatBecameUphill, step, stepIndex) {
-  const offendingFolders = everyRectangle.filter((rectangle) => !rectangle.children && rectangle.offence.score > 0).length;
-  const byNewImport = linksThatBecameUphill.filter((found) => found.cause === "new import").length;
-  const byDrift = linksThatBecameUphill.length - byNewImport;
-  let text = `${plural(offendingFolders, "folder")} without subfolders offend at this step. `;
+function describeWhatIsShown({ everyRectangle, allArrows, arrowsShown, step, stepIndex, minimumSteepness, selectedRectangle, caseToCompare }) {
+  let text;
+  if (selectedRectangle !== null) {
+    const importsCount = arrowsShown.filter((arrow) => arrow.direction === "out").length;
+    const dependedOnCount = arrowsShown.length - importsCount;
+    text = `${nameForPeople(selectedRectangle.data)}. Blue arrows: ${plural(importsCount, "folder")} it imports. ` +
+      `Red arrows: ${plural(dependedOnCount, "folder")} that depend on it.` +
+      (minimumSteepness > 0 ? ` Climbs under ${minimumSteepness.toFixed(1)} are hidden.` : "") +
+      " Click the folder again to see every arrow.";
+  } else if (caseToCompare !== null) {
+    text = arrowsShown.length > 0
+      ? `${caseToCompare.from} → ${caseToCompare.to}: only this case's arrow is shown. Click a folder to see what else touches it.`
+      : `${caseToCompare.from} → ${caseToCompare.to} is the case in To Decide, but at this step the two sit in the same rectangle or are not linked.`;
+  } else {
+    const offendingFolders = everyRectangle.filter((rectangle) => !rectangle.children && rectangle.offence.score > 0).length;
+    text = `${plural(offendingFolders, "folder")} without subfolders offend. ${arrowsShown.length} of ${allArrows.length} dependencies shown` +
+      (minimumSteepness > 0 ? `; climbs under ${minimumSteepness.toFixed(1)} are hidden.` : ".") +
+      " Click a folder to see what it imports (blue) and what depends on it (red).";
+  }
   if (stepIndex > 0) {
-    text += `${plural(linksThatBecameUphill.length, "link")} became uphill during the pull request so far ` +
-      `(${byNewImport} by a new import, ${byDrift} by drift). ` +
-      `${plural(step.foldersChangedSinceStart.length, "folder")} changed so far, ${step.foldersChangedInThisStep.length} in this commit.`;
+    const becameUphill = allArrows.filter((arrow) => arrow.pullRequestStory !== null);
+    const byNewImport = becameUphill.filter((arrow) => arrow.pullRequestStory === "new import").length;
+    text += ` During the pull request so far, ${plural(becameUphill.length, "arrow")} became uphill ` +
+      `(${byNewImport} by a new import, ${becameUphill.length - byNewImport} by drift), and ` +
+      `${plural(step.foldersChangedSinceStart.length, "folder")} changed (${step.foldersChangedInThisStep.length} in this commit).`;
   }
   return el("p", "view-summary", text);
 }
 
-function drawLegend(darkestScoreOnLevel, everyRectangle) {
+function drawLegend(darkestScoreOnLevel, aFolderIsSelected) {
   const legend = el("div", "legend offender-legend");
   const scale = el("span", "legend-item");
   scale.append(el("span", "", "no uphill links"), el("i", "offence-scale-bar"), el("span", "", "worst folder on its nesting level"));
   legend.append(scale);
 
+  const arrowKey = el("span", "legend-item");
+  arrowKey.append(el("i", "sw line out"), document.createTextNode(aFolderIsSelected ? "it imports" : "imports"));
+  if (aFolderIsSelected) arrowKey.append(el("i", "sw line in"), document.createTextNode("they import it"));
+  arrowKey.append(el("i", "sw line became-uphill"), document.createTextNode("became uphill in the pull request (dashed: drift)"));
+  legend.append(arrowKey);
+
   const outlineKey = el("span", "legend-item");
   outlineKey.append(el("i", "sw outline-key changed-in-this-step"), document.createTextNode("changed in this commit"),
     el("i", "sw outline-key changed-earlier-in-pull-request"), document.createTextNode("changed earlier in the pull request"));
   legend.append(outlineKey);
-
-  const arrowKey = el("span", "legend-item");
-  arrowKey.append(el("i", "sw arrow-key by-new-import"), document.createTextNode("became uphill by a new import"),
-    el("i", "sw arrow-key by-drift"), document.createTextNode("became uphill by drift"));
-  legend.append(arrowKey);
 
   const levels = [...darkestScoreOnLevel.entries()].sort((a, b) => a[0] - b[0]);
   const darkestList = el("p", "darkest-per-level");
@@ -517,20 +680,32 @@ function describeSelectedFolder(rectangle, minimumSteepness) {
     box.append(el("p", "", "It imports nothing less stable than itself."));
     return box;
   }
+  box.append(el("p", "", "Its uphill links:"));
   const list = el("ul", "uphill-links");
   for (const link of offence.allUphillLinks) {
-    const counted = link.steepness >= minimumSteepness - 1e-9;
+    const counted = isAtLeastAsSteepAs(link, minimumSteepness);
     const history = link.steepnessBeforePullRequest === null
       ? "the folders were not linked before the pull request"
       : `steepness before the pull request ${link.steepnessBeforePullRequest.toFixed(2)}`;
-    const item = el("li", counted ? "counted" : "below-slider",
+    list.append(el("li", counted ? "counted" : "below-slider",
       `→ ${link.toFolder}: steepness ${link.steepness.toFixed(2)}, ${plural(link.importCount, "file import")}` +
       (link.importsAddedByPullRequest > 0 ? ` (${link.importsAddedByPullRequest} added by the pull request)` : "") +
-      `, ${history}${counted ? "" : ", below the slider so not counted"}`);
-    list.append(item);
+      `, ${history}${counted ? "" : ", below the slider so not counted"}`));
   }
   box.append(list);
   return box;
+}
+
+function describeArrowForTooltip({ link, pullRequestStory }) {
+  const lines = [
+    `${link.fromFolder} → ${link.toFolder}`,
+    `${plural(link.importCount, "file import")}` + (link.importsAddedByPullRequest > 0 ? `, ${link.importsAddedByPullRequest} added by the pull request` : ""),
+    isUphill(link) ? `climbs ${link.steepness.toFixed(2)} in instability (uphill)` : `goes down ${Math.abs(link.steepness).toFixed(2)} in instability`,
+  ];
+  if (pullRequestStory === "new import") lines.push("became uphill in this pull request through a new import");
+  if (pullRequestStory === "drift") lines.push("became uphill in this pull request through drift: the import was already there");
+  lines.push("click to select this link in the other views");
+  return lines.join("\n");
 }
 
 function describeFolderForTooltip(rectangle) {
@@ -542,7 +717,7 @@ function describeFolderForTooltip(rectangle) {
     nameForPeople(folder),
     `offence ${offence.score.toFixed(2)} from ${plural(offence.countedLinks.length, "uphill link")}`,
     `instability ${offence.measured.instability.toFixed(2)}, ${plural(offence.measured.filesInside, "file")}`,
-    "click for its links",
+    "click to see what it imports and what depends on it",
   ].join("\n");
 }
 
@@ -565,12 +740,29 @@ function nameForPeople(folder) {
   return folder.isOwnFilesCell ? `${path} (its own files)` : path;
 }
 
+/** "src/core/money" merged to 2 path segments is "src/core". The repository root "." stays ".". */
+function mergeToDepth(folderPath, depth) {
+  if (folderPath === ".") return ".";
+  return folderPath.split("/").slice(0, depth).join("/");
+}
+
 function depthOfPath(folderPath) {
   return folderPath === "." ? 1 : folderPath.split("/").length;
 }
 
 function middleOf(rectangle) {
   return { x: (rectangle.x0 + rectangle.x1) / 2, y: (rectangle.y0 + rectangle.y1) / 2 };
+}
+
+/** Pull both ends of a line in by `gap`, so the arrow head does not sit on the label in the middle of the folder. */
+function shortenAtBothEnds(start, end, gap) {
+  const length = Math.hypot(end.x - start.x, end.y - start.y);
+  if (length <= gap * 2) return { start, end };
+  const along = gap / length;
+  return {
+    start: { x: start.x + (end.x - start.x) * along, y: start.y + (end.y - start.y) * along },
+    end: { x: end.x - (end.x - start.x) * along, y: end.y - (end.y - start.y) * along },
+  };
 }
 
 function rgb([red, green, blue]) {

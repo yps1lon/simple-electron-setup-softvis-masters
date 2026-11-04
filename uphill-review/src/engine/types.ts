@@ -362,8 +362,12 @@ export interface MeasuredLevel {
   mergedToDepth: number;
   /** Folder path (at this level) -> its numbers. */
   folders: Record<string, MeasuredFolder>;
-  /** Every link at this level that points uphill (steepness above 0), steepest first. */
-  uphillLinks: MeasuredUphillLink[];
+  /**
+   * Every folder link at this level, uphill or not, steepest first. Uphill
+   * links have a steepness above 0; downhill and flat ones are kept so the
+   * view can draw every dependency, like the flat treemap does.
+   */
+  links: MeasuredLink[];
 }
 
 export interface MeasuredFolder {
@@ -375,7 +379,7 @@ export interface MeasuredFolder {
   importsFilesOutside: number;
 }
 
-export interface MeasuredUphillLink {
+export interface MeasuredLink {
   fromFolder: string;
   toFolder: string;
   steepness: number;

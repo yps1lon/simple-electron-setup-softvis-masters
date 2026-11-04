@@ -204,7 +204,7 @@ test("the offender map measures each level with folders merged to that depth", (
   const lastStep = review().offenderMap.steps.at(-1);
   const levelTwo = lastStep.levels[1];
   // At level 2 the features folders merge into one, so core's two new imports become one link.
-  const coreToFeatures = levelTwo.uphillLinks.find((link) => link.fromFolder === "src/core" && link.toFolder === "src/features");
+  const coreToFeatures = levelTwo.links.find((link) => link.fromFolder === "src/core" && link.toFolder === "src/features");
   assert.ok(coreToFeatures !== undefined);
   assert.equal(coreToFeatures.steepnessBeforePullRequest, null);
   assert.equal(coreToFeatures.importsAddedByPullRequest, 2);
@@ -212,14 +212,14 @@ test("the offender map measures each level with folders merged to that depth", (
   assert.equal(levelTwo.folders["src/features/checkout"], undefined);
   // At level 3 the same imports are two separate links.
   const levelThree = lastStep.levels[2];
-  assert.ok(levelThree.uphillLinks.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/checkout"));
-  assert.ok(levelThree.uphillLinks.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/notifications"));
+  assert.ok(levelThree.links.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/checkout"));
+  assert.ok(levelThree.links.some((link) => link.fromFolder === "src/core" && link.toFolder === "src/features/notifications"));
 });
 
 test("the offender map compares every step with the codebase before the pull request", () => {
   const steps = review().offenderMap.steps;
   for (const level of steps[0].levels) {
-    for (const link of level.uphillLinks) {
+    for (const link of level.links) {
       assert.equal(link.importsAddedByPullRequest, 0);
       assert.equal(link.steepnessBeforePullRequest, link.steepness);
     }

@@ -5,7 +5,7 @@ import type {
   LayoutFolder,
   MeasuredFolder,
   MeasuredLevel,
-  MeasuredUphillLink,
+  MeasuredLink,
   OffenderMap,
   PullRequestStep,
   Snapshot,
@@ -16,8 +16,8 @@ import type {
  *
  * For every step of a pull request (the codebase before it, then after each
  * of its commits) and for every folder depth, this measures each folder's
- * instability and lists every link that points uphill. The view does the
- * rest: it lets the user pick how steep a link must be to count (the
+ * instability and lists every link between folders, with how steep it
+ * climbs. The view does the rest: it lets the user pick how steep a link must be to count (the
  * slider), adds up each folder's steepness into an offence score, and
  * colours white to red.
  *
@@ -27,9 +27,6 @@ import type {
 
 /** A pull request with more commits than this shows an even spread of them, always including the last. */
 export const MOST_COMMITS_SHOWN = 40;
-
-/** Steepness this close to zero counts as flat, not uphill (rounding noise). */
-const FLAT_ENOUGH = 1e-9;
 
 export interface CommitInPullRequest {
   commit: CommitRef;
@@ -138,8 +135,8 @@ function measureEveryLevel(snapshot: Snapshot, deepestFolderDepth: number, start
 
 /**
  * One level: merge every folder to `mergedToDepth` path segments, count
- * instability again for the merged folders, and keep the links that point
- * uphill. Imports between two folders that merge into one stop being links,
+ * instability again for the merged folders, and list every link with its
+ * steepness. Imports between two folders that merge into one stop being links,
  * which is why a parent can look clean while a child inside it offends.
  */
 function measureOneLevel(snapshot: Snapshot, mergedToDepth: number, startingPoint: StartingPoint): MeasuredLevel {
@@ -159,19 +156,18 @@ function measureOneLevel(snapshot: Snapshot, mergedToDepth: number, startingPoin
   }
 
   const steepnessBeforeOfLink = startingPoint.steepnessOfEveryLinkByLevel.get(mergedToDepth) ?? new Map<string, number>();
-  const uphillLinks: MeasuredUphillLink[] = [];
+  const links: MeasuredLink[] = [];
   for (const link of folderLinks(snapshot.edges, mergeToThisDepth).values()) {
     const importerInstability = stabilityOfFolder.get(link.from)?.instability ?? 0;
     const importedInstability = stabilityOfFolder.get(link.to)?.instability ?? 0;
     const steepness = importedInstability - importerInstability;
-    if (steepness <= FLAT_ENOUGH) continue;
 
     const steepnessBefore = steepnessBeforeOfLink.get(linkKey(link.from, link.to));
     const importsAddedByPullRequest = link.imports.filter(
       (fileImport) => !startingPoint.fileImportsThatExisted.has(fileImportKey(fileImport.from, fileImport.to)),
     ).length;
 
-    uphillLinks.push({
+    links.push({
       fromFolder: link.from,
       toFolder: link.to,
       steepness: roundToThreeDecimals(steepness),
@@ -180,11 +176,11 @@ function measureOneLevel(snapshot: Snapshot, mergedToDepth: number, startingPoin
       importsAddedByPullRequest,
     });
   }
-  uphillLinks.sort(
+  links.sort(
     (a, b) => b.steepness - a.steepness || a.fromFolder.localeCompare(b.fromFolder) || a.toFolder.localeCompare(b.toFolder),
   );
 
-  return { mergedToDepth, folders, uphillLinks };
+  return { mergedToDepth, folders, links };
 }
 
 // ---------------------------------------------------------------------------
